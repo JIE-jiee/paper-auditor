@@ -1,0 +1,48 @@
+{
+  "profile_version": "0.1.0",
+  "owner": "personal",
+  "discipline": [
+    "structural engineering",
+    "earthquake engineering",
+    "seismic resilience",
+    "self-centering systems",
+    "rocking systems"
+  ],
+  "default_mode": "deep",
+  "report_language": "zh-CN",
+  "manuscript_language": "en-US",
+  "document_types": ["journal article", "conference paper", "thesis chapter"],
+  "source_priority": ["tex", "docx", "pdf", "md", "txt"],
+  "preserve_source": true,
+  "privacy": {
+    "allow_bibliographic_metadata_queries": true,
+    "allow_fulltext_external_upload": false,
+    "allow_figure_external_upload": false,
+    "crossref_mailto": ""
+  },
+  "abbreviations": {
+    "minimum_uses_after_definition": 2,
+    "require_definition_in_abstract_and_main_text": true,
+    "whitelist": ["ASCE", "DOI", "ISO", "SI", "Hz", "MPa", "GPa", "kN"]
+  },
+  "style": {
+    "english_variant": "en-US",
+    "prefer_figure_token": "Fig.",
+    "prefer_equation_token": "Eq.",
+    "space_between_number_and_si_unit": true,
+    "space_before_percent": false,
+    "avoid_title_abbreviations": true
+  },
+  "checks": {
+    "unused_bibliography_entries": true,
+    "unused_latex_labels": true,
+    "redefined_symbols": "needs-review",
+    "hardcoded_latex_cross_references": true
+  },
+  "journal_priority": [
+    "Earthquake Engineering & Structural Dynamics",
+    "Engineering Structures",
+    "ASCE Journal of Structural Engineering"
+  ],
+  "severity_overrides": {}
+}

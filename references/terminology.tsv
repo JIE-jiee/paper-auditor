@@ -1,0 +1,29 @@
+preferred	aliases	forbidden	abbreviation	case_sensitive	notes
+self-centering	self-centring|self centering	self-resetting	SC	false	Use the hyphenated US-English form as the default adjective.
+recentering	re-centring|recentring|re-centering			false	Use consistently; retain another form when a target journal requires it.
+rocking system	rocking structural system			false	Do not replace controlled rocking or free rocking when the distinction is material.
+controlled rocking	controlled-rocking			false	Use for systems with intentional restoring and/or energy-dissipation mechanisms.
+residual drift	residual deformation			false	These can differ; flag for review rather than auto-replace.
+interstory drift ratio	inter-storey drift ratio|interstory drift	story drift angle	IDR	false	Use the full quantity name when the ratio is meant.
+residual interstory drift ratio	residual IDR|residual drift ratio		RIDR	false	Residual drift ratio and residual interstory drift ratio may differ; confirm the normalization before replacing.
+peak floor acceleration	floor acceleration demand		PFA	false	Peak floor acceleration may differ from peak total acceleration or a component value; confirm the definition.
+moment-resisting frame	moment resisting frame|moment-resistent frame		MRF	false	Hyphenate the compound modifier.
+concentrically braced frame	concentric braced frame		CBF	false	Confirm whether the system is conventional or self-centering.
+controlled rocking braced frame	controlled rocking frame		CRBF	false	Do not use as a synonym for every rocking system; confirm the intended lateral-force-resisting system.
+buckling-restrained braced frame	buckling restrained braced frame		BRBF	false	Hyphenate the compound modifier and distinguish the frame from an individual BRB.
+self-centering energy-dissipative brace	self-centering energy dissipative brace|self-centering energy-dissipation brace		SCED	false	Keep the expansion aligned with the abbreviation used by the manuscript.
+post-tensioned	post tensioned|posttensioned		PT	false	Prefer the hyphenated adjective; do not alter established product names.
+energy dissipation	energy-dissipation		ED	false	Hyphenate only when used as a compound modifier.
+energy-dissipating device	energy dissipating device|energy dissipation device		EDD	false	Check whether device or fuse is the technically intended object.
+reinforced concrete	reinforced-concrete		RC	false	Do not hyphenate the standalone material name.
+finite-element analysis	finite element analysis|finite-element method		FEA	false	Method and analysis are not always interchangeable.
+shape memory alloy	shape-memory alloy		SMA	false	Hyphenate only as required by sentence role or journal style.
+ground motion	ground-motion		GM	false	Hyphenate as a modifier, e.g. ground-motion record.
+design-basis earthquake	design basis earthquake		DBE	false	Use the hyphenated compound modifier and state the hazard definition used by the study.
+maximum considered earthquake	maximum-considered earthquake		MCE	false	Use consistently and state the governing code or hazard definition.
+mainshock-aftershock sequence	mainshock–aftershock sequence|mainshock aftershock sequence		MS-AS	false	Prefer an en dash or hyphen consistently.
+flag-shaped hysteresis	flag shaped hysteresis			false	Use the hyphenated compound modifier.
+coefficient of restitution	restitution coefficient		CoR	false	Define the kinematic or energetic form and the impact model in which it is used.
+low-cycle fatigue	low cycle fatigue		LCF	false	Use the hyphenated technical term.
+repairability	reparability			false	Both occur in literature; default to repairability but do not auto-replace.
+collapse resistance	collapse capacity			false	Flag for semantic review because the quantities may differ.
