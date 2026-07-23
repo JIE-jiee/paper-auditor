@@ -52,11 +52,11 @@ Pass `--profile` or `--terms` only when using non-default configuration. Use a n
 
 ### 1. Deterministic pass
 
-Check abbreviations, preferred/forbidden terminology, US/UK spelling, unit typography, captions and callouts, LaTeX labels/references/citations, and bibliography use. Confirm parser warnings before treating absence as a manuscript defect.
+Check abbreviations, preferred/forbidden terminology, US/UK spelling, unit typography, captions and callouts, LaTeX labels/references/citations, and bibliography use. Treat the abstract and main text as separate abbreviation scopes: require a first-use definition in each scope and, when the profile enables it, flag a later return to the learned full term after that definition. Confirm parser warnings before treating absence as a manuscript defect.
 
 ### 2. Language and tense pass
 
-Review sentence-level grammar and section-level tense in context. Do not enforce a single tense mechanically. Distinguish established knowledge, actions completed in the study, descriptions of figures/tables, and conclusions that remain true. Report a tense issue only when the local choice is grammatically wrong or the shift obscures the timeline or claim.
+Review sentence-level grammar and section-level tense in context. Apply the owner profile by default: completed research work uses the past tense, general conclusions use the present tense, and statements about the proposed model/system's performance use the present tense; completed model development, calibration, and testing actions remain past. Do not enforce a single tense mechanically. Distinguish established knowledge, actions completed in the study, descriptions of figures/tables, and conclusions that remain true. Report a tense issue only when the local choice is grammatically wrong or the shift obscures the timeline or claim.
 
 ### 3. Terminology and notation pass
 

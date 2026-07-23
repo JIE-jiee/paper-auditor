@@ -1,5 +1,5 @@
 {
-  "profile_version": "0.2.0",
+  "profile_version": "0.3.0",
   "owner": "personal",
   "discipline": [
     "structural engineering",
@@ -38,9 +38,15 @@
     "require_rights_attestation": true,
     "fulltext_external_upload": false
   },
+  "tense": {
+    "completed_study_actions": "past",
+    "general_conclusions": "present",
+    "proposed_model_performance": "present"
+  },
   "abbreviations": {
     "minimum_uses_after_definition": 2,
     "require_definition_in_abstract_and_main_text": true,
+    "require_abbreviation_after_definition": true,
     "whitelist": ["ASCE", "DOI", "ISO", "SI", "Hz", "MPa", "GPa", "kN"]
   },
   "style": {

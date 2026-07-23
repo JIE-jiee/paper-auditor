@@ -68,6 +68,260 @@ SC frames have been studied extensively. The SC response is discussed here.
         self.assertEqual("body", first_use[0]["location"]["scope"])
         self.assertEqual("Introduction", first_use[0]["location"]["section"])
 
+    def test_long_form_after_definition_is_flagged_in_each_scope(self):
+        _, _, result = self.audit_text(
+            "long-form-after-definition.txt",
+            """Abstract
+A self-centering (SC) frame was tested. SC reduced residual drift.
+The self-centering frame remained stable.
+
+Introduction
+A self-centering (SC) frame was analyzed. SC matched the measurements.
+The self-centering frame remained stable.
+""",
+        )
+        findings = [
+            item
+            for item in result["findings"]
+            if item["check_id"] == "abbreviation-long-form-after-definition"
+            and "SC" in item["observation"]
+        ]
+        self.assertEqual(2, len(findings))
+        self.assertEqual(
+            {"abstract", "body"}, {item["location"]["scope"] for item in findings}
+        )
+        self.assertTrue(all(item["severity"] == "Minor" for item in findings))
+        self.assertFalse(
+            any(
+                item["check_id"] == "abbreviation-low-use"
+                and "SC" in item["observation"]
+                for item in result["findings"]
+            )
+        )
+
+    def test_each_scope_can_define_once_and_then_use_only_abbreviation(self):
+        _, _, result = self.audit_text(
+            "scope-success.txt",
+            """Abstract
+A self-centering (SC) frame was tested. SC reduced residual drift. SC remained stable.
+
+Introduction
+A self-centering (SC) frame was analyzed. SC matched the measurements. SC remained stable.
+""",
+        )
+        self.assertFalse(
+            any(
+                item["check_id"] in {
+                    "abbreviation-first-use",
+                    "abbreviation-long-form-after-definition",
+                }
+                and "SC" in item["observation"]
+                for item in result["findings"]
+            )
+        )
+
+    def test_long_form_before_definition_and_definition_phrase_are_not_flagged(self):
+        _, _, result = self.audit_text(
+            "long-form-before-definition.txt",
+            """Methods
+The self-centering frame was prepared; a self-centering (SC) frame was then tested. SC reduced residual drift. SC remained stable.
+""",
+        )
+        self.assertFalse(
+            any(
+                item["check_id"] == "abbreviation-long-form-after-definition"
+                for item in result["findings"]
+            )
+        )
+
+    def test_same_line_repeated_long_forms_have_distinct_findings(self):
+        _, _, result = self.audit_text(
+            "same-line-long-forms.txt",
+            """Methods
+A self-centering (SC) frame was tested. The self-centering frame remained stable, and the self-centering response was repeatable.
+""",
+        )
+        findings = [
+            item
+            for item in result["findings"]
+            if item["check_id"] == "abbreviation-long-form-after-definition"
+        ]
+        self.assertEqual(2, len(findings))
+        self.assertEqual(2, len({item["id"] for item in findings}))
+
+    def test_repeated_definition_is_a_long_form_after_definition(self):
+        _, _, result = self.audit_text(
+            "repeated-definition.txt",
+            """Methods
+A self-centering (SC) frame was tested. SC reduced residual drift.
+Results
+The self-centering (SC) frame remained stable.
+""",
+        )
+        findings = [
+            item
+            for item in result["findings"]
+            if item["check_id"] == "abbreviation-long-form-after-definition"
+        ]
+        self.assertEqual(1, len(findings))
+        self.assertEqual(4, findings[0]["location"]["line"])
+
+    def test_nested_long_form_is_assigned_to_longest_defined_abbreviation(self):
+        _, _, result = self.audit_text(
+            "nested-long-forms.txt",
+            """Methods
+The interstory drift ratio (IDR) was recorded. IDR governed acceptance. IDR was stable.
+The residual interstory drift ratio (RIDR) was recorded. RIDR was low. RIDR remained stable.
+Results
+The residual interstory drift ratio remained below the limit.
+""",
+        )
+        findings = [
+            item
+            for item in result["findings"]
+            if item["check_id"] == "abbreviation-long-form-after-definition"
+        ]
+        self.assertEqual(1, len(findings))
+        self.assertIn("RIDR", findings[0]["observation"])
+
+    def test_known_longer_term_shadows_shorter_abbreviation_without_definition(self):
+        _, _, result = self.audit_text(
+            "known-longer-term.txt",
+            """Methods
+The interstory drift ratio (IDR) was recorded. IDR governed acceptance. IDR was stable.
+Results
+The residual interstory drift ratio remained below the limit.
+""",
+        )
+        self.assertFalse(
+            any(
+                item["check_id"] == "abbreviation-long-form-after-definition"
+                and "IDR" in item["observation"]
+                for item in result["findings"]
+            )
+        )
+
+    def test_each_latex_source_unit_uses_its_own_definition_for_long_form_checks(self):
+        main = self.root / "main.tex"
+        first = self.root / "first.tex"
+        second = self.root / "second.tex"
+        main.write_text(
+            r"""\documentclass{article}
+\begin{document}
+\input{first}
+\input{second}
+\end{document}
+""",
+            encoding="utf-8",
+        )
+        first.write_text(
+            r"""\section{Methods}
+A self-centering (SC) frame was tested. SC reduced residual drift. SC remained stable.
+""",
+            encoding="utf-8",
+        )
+        second.write_text(
+            r"""\section{Methods}
+A self-centering (SC) frame was analyzed. SC matched the measurements.
+The self-centering frame remained stable.
+""",
+            encoding="utf-8",
+        )
+        result = run_audit(main, self.root / "multifile-abbreviation-review")
+        findings = [
+            item
+            for item in result["findings"]
+            if item["check_id"] == "abbreviation-long-form-after-definition"
+        ]
+        self.assertEqual(1, len(findings))
+        self.assertEqual("second.tex", findings[0]["location"]["source"])
+        self.assertEqual(3, findings[0]["location"]["line"])
+
+    def test_long_form_after_definition_can_wrap_across_physical_lines(self):
+        _, _, result = self.audit_text(
+            "wrapped-long-form.tex",
+            r"""\section{Methods}
+Peak floor acceleration (PFA) was measured. PFA governed the comparison. PFA was stable.
+\section{Results}
+The peak floor
+acceleration remained below the limit.
+""",
+        )
+        findings = [
+            item
+            for item in result["findings"]
+            if item["check_id"] == "abbreviation-long-form-after-definition"
+            and "PFA" in item["observation"]
+        ]
+        self.assertEqual(1, len(findings))
+        self.assertEqual(4, findings[0]["location"]["line"])
+        self.assertIn("peak floor acceleration", findings[0]["observation"])
+
+    def test_long_form_after_definition_finding_id_is_stable(self):
+        manuscript = self.root / "stable-long-form.txt"
+        manuscript.write_text(
+            """Methods
+A self-centering (SC) frame was tested. SC reduced residual drift.
+The self-centering frame remained stable.
+""",
+            encoding="utf-8",
+        )
+        first = run_audit(manuscript, self.root / "stable-long-form-review-1")
+        second = run_audit(manuscript, self.root / "stable-long-form-review-2")
+        first_id = next(
+            item["id"]
+            for item in first["findings"]
+            if item["check_id"] == "abbreviation-long-form-after-definition"
+        )
+        second_id = next(
+            item["id"]
+            for item in second["findings"]
+            if item["check_id"] == "abbreviation-long-form-after-definition"
+        )
+        self.assertEqual(first_id, second_id)
+
+    def test_long_form_after_definition_check_can_be_disabled(self):
+        manuscript = self.root / "long-form-disabled.txt"
+        manuscript.write_text(
+            """Methods
+A self-centering (SC) frame was tested. SC reduced residual drift.
+The self-centering frame remained stable.
+""",
+            encoding="utf-8",
+        )
+        profile = self.write_profile(
+            "long-form-disabled-profile.json",
+            {"abbreviations": {"require_abbreviation_after_definition": False}},
+        )
+        result = run_audit(
+            manuscript, self.root / "long-form-disabled-review", profile_path=profile
+        )
+        self.assertFalse(
+            any(
+                item["check_id"] == "abbreviation-long-form-after-definition"
+                for item in result["findings"]
+            )
+        )
+
+    def test_abbreviation_boolean_configuration_requires_a_boolean(self):
+        manuscript = self.root / "invalid-abbreviation-config.txt"
+        manuscript.write_text(
+            "Methods\nA self-centering (SC) frame was tested. SC remained stable.\n",
+            encoding="utf-8",
+        )
+        profile = self.write_profile(
+            "invalid-abbreviation-config-profile.json",
+            {"abbreviations": {"require_abbreviation_after_definition": "false"}},
+        )
+        with self.assertRaisesRegex(
+            AuditError, "require_abbreviation_after_definition"
+        ):
+            run_audit(
+                manuscript,
+                self.root / "invalid-abbreviation-config-review",
+                profile_path=profile,
+            )
+
     def test_preferred_term_does_not_trigger_shorter_alias(self):
         _, _, result = self.audit_text(
             "preferred.md",
