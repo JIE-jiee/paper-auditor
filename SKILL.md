@@ -1,6 +1,6 @@
 ---
 name: paper-auditor
-description: Audit scholarly manuscripts for language and tense issues, abbreviation and terminology consistency, figure/table/equation callouts, citation-reference integrity and authenticity, claim-to-source support, formula/symbol/unit/value consistency, engineering-standard editions/clauses/applicability, technical logic, and claim consistency. Use for pre-submission review, manuscript quality control, reviewer-style critique, targeted checks of Word (.docx), LaTeX (.tex/.bib), PDF, Markdown, or plain-text papers, or when personalizing and updating manuscript-review rules, especially in structural and earthquake engineering, seismic resilience, and self-centering or rocking systems.
+description: Audit scholarly manuscripts for language and tense issues, abbreviation and terminology consistency, figure/table/equation callouts, citation-reference integrity and authenticity, claim-to-source support, formula/symbol/unit/value consistency, engineering-standard editions/clauses/applicability, technical logic, claim consistency, evidence provenance, and review completeness. Use for pre-submission review, manuscript quality control, reviewer-style critique, targeted checks of Word (.docx), LaTeX (.tex/.bib), PDF, Markdown, or plain-text papers, or when personalizing and updating manuscript-review rules, especially in structural and earthquake engineering, seismic resilience, and self-centering or rocking systems.
 ---
 
 # Paper Auditor
@@ -19,6 +19,7 @@ Read `references/personal-profile.json` and `references/terminology.tsv` before 
 - Read `references/journal-benchmarks.md` when the user names EESD, Engineering Structures, ASCE, or asks for journal-style review.
 - Read `references/personalization-guide.md` when the user asks to add, remove, or change personal review rules.
 - Read `references/tooling-reference.md` only when the user asks how the Skill was designed or wants optional open-source integrations.
+- Read `references/evidence-spine.md` before a `deep` review, a multi-pass `targeted` review, or any final merge of deterministic and semantic findings.
 
 Treat the profile as an editable baseline, not universal truth. Prefer an explicit user instruction or a named journal's current author guidance over the baseline. Some profile fields configure the deterministic scripts; others guide the semantic and journal passes performed by the reviewing agent.
 
@@ -48,6 +49,16 @@ python "<skill-root>\scripts\audit_manuscript.py" "<manuscript>" --output-dir "<
 
 Pass `--profile` or `--terms` only when using non-default configuration. Use a new output directory. If a prior report must be replaced, use `--force` only after confirming that the existing report may be overwritten. Use the structured JSON as evidence, not as the final judgment.
 
+Before a `deep` review or any review whose final report combines multiple passes, initialize the shared evidence spine:
+
+```powershell
+python "<skill-root>\scripts\evidence_spine.py" prepare "<manuscript>" --mode deep --output-dir "<new-review-root>\spine"
+```
+
+Declare every bibliography, appendix, rendered PDF, profile, terminology file, quantity profile, standards registry, local cited source, cited-source map, and figure/table data file that can affect the review. Use `--artifact ROLE=PATH` and `--rendered-artifact` as specified in `references/evidence-spine.md`. A cited source's filename stem is its default citation identity; when that differs from the manuscript citation key, declare the exact local binding as a `cited_source_map`. Never declare a bare `standard_source`; use `--standards-source-map` and the standards registry so rights, processing mode, and any required publisher permission are checked before the file is opened or hashed. Keep the generated manifest, ledger, and coverage files private with the review outputs.
+
+All contributing passes must use the same `ledger_fingerprint`. Record each pass through `evidence_spine.py record-pass`; a `not_applicable` result requires a current inventory with a non-empty scope, `item_count: 0`, an empty `items` list, and a rationale. `not_run`, `failed`, `insufficient_evidence`, and stale results can never mean “no problem.”
+
 ## Run the audit
 
 ### 1. Deterministic pass
@@ -74,7 +85,7 @@ Use the output to build ledgers for symbols, definitions, units, repeated quanti
 
 ### 5. Claim and logic pass
 
-Read the complete manuscript before finalizing findings. Build a compact claim ledger spanning title, abstract, introduction, methods, results, discussion, and conclusions. Check:
+Read the complete manuscript before finalizing findings. Use the shared evidence ledger and register the manuscript spans supporting every semantic proposal. Build a compact central-claim view spanning title, abstract, introduction, methods, results, discussion, and conclusions. Check:
 
 - whether objectives, methods, results, and conclusions align;
 - whether novelty claims are supported and consistently scoped;
@@ -83,7 +94,7 @@ Read the complete manuscript before finalizing findings. Build a compact claim l
 - whether limitations stated earlier disappear from the conclusion;
 - whether figures and tables support the direction, magnitude, and comparison described in text.
 
-In `deep` mode, delegate independent language/terminology, logic/claims, citations, and figures/tables passes when parallel review materially helps. Give a separate reviewer only the raw manuscript and this skill; do not reveal expected defects. Independently recheck every Blocker or Major semantic finding.
+In `deep` mode, delegate independent language/terminology, logic/claims, citations, and figures/tables passes when parallel review materially helps. Give a separate reviewer only the raw manuscript and this skill; do not reveal expected defects. For every Blocker or Major semantic finding, record structured alternative explanations and an independent recheck against the current ledger fingerprint. The proposer and rechecker must be different reviewers. Mark material counterevidence as `contested`; never silently erase or reduce the proposed technical impact.
 
 ### 6. Citation and claim-support pass
 
@@ -134,7 +145,15 @@ Inspect the rendered PDF or rendered Word pages in `deep` mode. Verify legibilit
 
 ## Produce the report
 
-Create `review-report.md` and `findings.json` in a separate review directory. Preserve deterministic outputs and add semantic findings using the same schema. Merge confirmed findings from `quantitative.json`, `claim-support.json`, and `standards.json`; preserve their evidence candidates, review tasks, and unable-to-verify results without promoting them to defects.
+Preserve every pass result in its own directory. When the evidence spine is active, record all completed, not-applicable, failed, and evidence-limited passes into a new coverage file, then run:
+
+```powershell
+python "<skill-root>\scripts\evidence_spine.py" finalize "<artifact-manifest.json>" "<evidence-ledger.json>" "<latest-coverage.json>" --output-dir "<new-final-review-dir>"
+```
+
+Use the resulting `review-report.md` and `findings.json` as the final projection. Do not manually concatenate producer JSON. Preserve evidence candidates, review tasks, unable-to-verify results, and rejected proposals under their appropriate inventories or `manual_checks`; unresolved priority claims, blocked standard tasks, and quantitative candidates require `manual_confirmation_required`, but never promote them to defects merely to fill the report.
+
+A report may say the review is complete only when every required pass is `completed` or has evidence-backed `not_applicable` status and all producer hashes match the current manifest and ledger. If a required pass is absent or stale, report `incomplete` or `stale` even when there are no formal findings.
 
 For every formal finding include:
 
@@ -142,6 +161,7 @@ For every formal finding include:
 - severity and confidence as separate fields;
 - status (`confirmed`, `likely`, `needs-review`, or `unable-to-verify`);
 - source anchor and short quotation;
+- one or more current `evidence_ids` from the shared ledger;
 - related source anchors and a reproducible calculation when a cross-location or numeric conflict is involved;
 - observation, expected state, reason, and concrete suggestion;
 - evidence source and verification date when external facts are involved;

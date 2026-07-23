@@ -1450,9 +1450,21 @@ def finalize_claim_support(
                         "status": "confirmed" if decision["confidence"] >= 0.90 else "likely",
                         "location": claim.get("location", {}),
                         "quote": claim.get("claim", ""),
+                        "verdict": verdict,
                         "citation_key": pair[1],
+                        "dimension_matches": decision["dimension_matches"],
                         "observation": decision["rationale"],
                         "evidence": selected_evidence,
+                        "evidence_source": {
+                            "citation_key": pair[1],
+                            "sha256": source.get("source_access", {}).get("sha256", ""),
+                            "basename": Path(
+                                str(source.get("source_access", {}).get("path", ""))
+                            ).name,
+                            "detected_doi": source.get("source_access", {}).get(
+                                "detected_doi", ""
+                            ),
+                        },
                         "suggested_fix": str(decision.get("suggested_revision", "")),
                         "auto_fixable": False,
                     }

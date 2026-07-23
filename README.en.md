@@ -21,6 +21,7 @@ A customizable Codex Skill for evidence-led, pre-submission manuscript review. I
 - Complete designations, editions, provision locators, formulas, and applicability for ASCE, ACI, AISC, Eurocodes, GB, and JGJ standards;
 - Alignment among objectives, methods, results, limitations, conclusions, and claims;
 - Whether visual evidence actually supports the trends, magnitudes, and comparisons stated in the prose.
+- Whether inputs, evidence anchors, review passes, and the final report use the same version; unexecuted or evidence-limited passes cannot masquerade as no issue.
 
 Supported inputs include Word, LaTeX/BibTeX, PDF, Markdown, and plain text. PDF text extraction uses `pdftotext` when needed.
 
@@ -34,13 +35,14 @@ Supported inputs include Word, LaTeX/BibTeX, PDF, Markdown, and plain text. PDF 
 
 The deterministic scripts provide reproducible checks for formatting, terminology, citations, and cross-references. Full semantic, logical, claim, and visual judgment is performed by Codex through the workflow in `SKILL.md`. Bibliographic metadata verification does not establish whether a source supports a specific claim.
 
-## Three core evidence chains
+## Four core evidence chains
 
 | Capability | Evidence chain | Boundary |
 | --- | --- | --- |
 | Citation support | Manuscript claim → citation location → cited-source passage → four-way verdict | Missing full text is `unable_to_verify`, never evidence of non-support |
 | Formulas, units, and values | Symbol/definition → unit and dimension → calculation → cross-section, table, and figure reconciliation | Plot estimates, weak matches, and unresolved formulas remain review candidates |
 | Engineering standards | Complete designation/edition → provision or equation → limits and exceptions → study applicability | A newer publication is not automatically governing; provision content requires the exact text |
+| Review completeness | Input manifest → shared evidence ledger → pass coverage → deterministic adjudication | Changed inputs are `stale`; changed or missing pass results are `incomplete` |
 
 ## Install as a Codex Skill
 
@@ -67,6 +69,16 @@ Preserve the manuscript and write the results to a new review directory.
 
 ## Command-line quick start
 
+Initialize the shared evidence spine before a full review:
+
+```powershell
+python "<skill-root>\scripts\evidence_spine.py" prepare "<manuscript>" `
+  --mode deep --output-dir "<new-review-root>\spine" `
+  --artifact "bibliography=<references.bib>"
+```
+
+Use `record-pass` after each pass and `finalize` after coverage is complete. See `references/evidence-spine.md` for the complete contract, capability matrix, and semantic Major/Blocker recheck format.
+Standard full text cannot be registered as a bare `standard_source`; use `--standards-source-map` so local-processing mode, rights attestation, and any publisher-permission record required for ASCE/ACI entries are checked first. Unverified claims, blocked standards tasks, and quantitative candidates remain visible in `manual_checks` instead of being silently treated as clean.
 Deterministic manuscript checks:
 
 ```powershell
@@ -126,6 +138,7 @@ Privacy controls:
 - `claim-evidence.json` and `claim-support.json` — claim-to-source evidence and final support verdicts;
 - `quantitative.json` — symbol, unit, dimension, calculation, repeated-value, and review-candidate records;
 - `standards.json` and `standards-report.md` — edition ledgers and provision/applicability review tasks.
+- `artifact-manifest.json`, `evidence-ledger.json`, `coverage.json`, and `final-evidence-ledger.json` — input hashes, stable manuscript/external-source evidence IDs, pass status, and stale-report provenance.
 
 The manuscript is preserved by default and reports are written to a separate directory. `--force` may replace existing reports only; it cannot overwrite the input manuscript or a BibTeX source that was read.
 
@@ -142,6 +155,7 @@ The manuscript is preserved by default and reports are written to a separate dir
 | `references/standards-verification.md` | Provision, equation, applicability, and rights-gate workflow |
 | `references/journal-benchmarks.md` | Style benchmarks for EESD, Engineering Structures, and ASCE journals |
 | `references/personalization-guide.md` | How to update personal rules safely |
+| `references/evidence-spine.md` | Shared manifest, evidence ledger, coverage, and final adjudication workflow |
 
 ## Privacy and limitations
 
@@ -158,4 +172,4 @@ The manuscript is preserved by default and reports are written to a separate dir
 python -m unittest discover -s scripts -p "test_*.py" -v
 ```
 
-The current version includes 63 regression tests. The core scripts use only the Python standard library; `pdftotext` is an optional dependency for PDF extraction.
+The current version includes 131 regression tests, including 31 negative cases for adversarial boundaries such as forged coverage, wrong-source binding, false locators, output aliases, and rights gates. The core scripts use only the Python standard library; `pdftotext` is an optional dependency for PDF extraction.

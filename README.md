@@ -21,6 +21,7 @@
 - ASCE、ACI、AISC、Eurocode、GB 与 JGJ 等工程标准的完整代号、版本、条款定位、公式与适用范围；
 - 研究目的、方法、结果、局限与结论之间的逻辑和观点一致性；
 - 图表证据是否真正支持正文中的趋势、幅值和比较结论。
+- 审核输入、证据锚点、各审核 pass 和最终报告是否使用同一版本；未执行或证据不足的项目不会冒充“无问题”。
 
 支持 Word、LaTeX/BibTeX、PDF、Markdown 和纯文本。PDF 文本提取在需要时依赖 `pdftotext`。
 
@@ -34,13 +35,14 @@
 
 确定性脚本负责可复现的格式、术语、引用和交叉引用检查；完整的语义、逻辑、观点和图表判断由 Codex 按 `SKILL.md` 中的审核流程完成。书目元数据核验不等于判断文献是否支持某项具体观点。
 
-## 三条核心证据链
+## 四条核心证据链
 
 | 能力 | 证据链 | 不越过的边界 |
 | --- | --- | --- |
 | 引文支持性 | 论文主张 → 引用位置 → 被引来源原文 → 四级结论 | 缺少全文只能标记“无法核验”，不能据此认定不支持 |
 | 公式、单位与数值 | 符号/定义 → 单位与量纲 → 计算 → 跨章节、表格和图件复核 | 图中估读值、弱匹配和未解析公式只作为复核候选 |
 | 工程标准 | 完整代号/版本 → 条款或公式 → 限制与例外 → 研究适用范围 | 新版不自动等于控制版本；无准确正文不得判断条款内容 |
+| 审核完整性 | 输入 manifest → 统一证据台账 → pass 覆盖状态 → 确定性裁决 | 输入改变标记 `stale`；pass 结果改变或缺失标记 `incomplete` |
 
 ## 安装为 Codex Skill
 
@@ -67,6 +69,16 @@ git clone https://github.com/JIE-jiee/paper-auditor.git "$HOME/.codex/skills/pap
 
 ## 命令行快速使用
 
+完整审核先建立统一证据主干：
+
+```powershell
+python "<skill-root>\scripts\evidence_spine.py" prepare "<manuscript>" `
+  --mode deep --output-dir "<new-review-root>\spine" `
+  --artifact "bibliography=<references.bib>"
+```
+
+各 pass 完成后使用 `record-pass` 登记覆盖状态，最后运行 `finalize`。完整字段、证据能力和语义 Major/Blocker 复核格式见 `references/evidence-spine.md`。
+标准全文不能作为裸 `standard_source` 登记；必须通过 `--standards-source-map`，先验证本地处理模式、权利声明，以及 ASCE/ACI 等条目所需的出版方许可记录。未核验的主张、被阻断的标准任务和量值候选会保留在 `manual_checks`，不会被静默当成“无问题”。
 确定性论文检查：
 
 ```powershell
@@ -126,6 +138,7 @@ python "<skill-root>\scripts\verify_standards.py" "<manuscript>" `
 - `claim-evidence.json` 与 `claim-support.json`：逐条主张—来源证据链及最终支持性结论；
 - `quantitative.json`：符号、单位、量纲、计算、重复数值和人工复核候选；
 - `standards.json` 与 `standards-report.md`：标准版本台账、条款任务与适用性复核入口。
+- `artifact-manifest.json`、`evidence-ledger.json`、`coverage.json` 与 `final-evidence-ledger.json`：输入哈希、稳定稿件/外部原文证据 ID、pass 执行状态和陈旧性依据。
 
 默认不修改原稿，报告写入独立目录。`--force` 只允许覆盖既有报告，不允许覆盖输入原稿或已读取的 BibTeX 源文件。
 
@@ -142,6 +155,7 @@ python "<skill-root>\scripts\verify_standards.py" "<manuscript>" `
 | `references/standards-verification.md` | 标准条款、公式、适用性和授权门控流程 |
 | `references/journal-benchmarks.md` | EESD、Engineering Structures 与 ASCE 期刊风格基准 |
 | `references/personalization-guide.md` | 安全修改个人规则的方法 |
+| `references/evidence-spine.md` | 统一 manifest、证据台账、覆盖记录和最终裁决流程 |
 
 ## 隐私与边界
 
@@ -158,4 +172,4 @@ python "<skill-root>\scripts\verify_standards.py" "<manuscript>" `
 python -m unittest discover -s scripts -p "test_*.py" -v
 ```
 
-当前版本包含 63 项回归测试，核心脚本只依赖 Python 标准库；PDF 提取工具 `pdftotext` 为可选依赖。
+当前版本包含 131 项回归测试，其中 31 项负向用例专门覆盖伪造覆盖状态、错绑来源、虚假定位、输出别名和权利门禁等对抗边界。核心脚本只依赖 Python 标准库；PDF 提取工具 `pdftotext` 为可选依赖。

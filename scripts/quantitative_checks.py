@@ -1455,14 +1455,17 @@ def analyze_file(
     quantity_profile_path: str | Path | None = None,
     **kwargs: Any,
 ) -> dict[str, Any]:
-    source_path = Path(path)
+    source_path = Path(path).resolve(strict=True)
     text = source_path.read_text(encoding="utf-8-sig")
-    return analyze_quantitative_text(
+    result = analyze_quantitative_text(
         text,
         source=source_path.name,
         quantity_profile_path=quantity_profile_path,
         **kwargs,
     )
+    result["input"] = {"path": str(source_path), "sha256": hashlib.sha256(source_path.read_bytes()).hexdigest()}
+    result["sources"] = [{"source": source_path.name, "sha256": result["input"]["sha256"]}]
+    return result
 
 
 def build_parser() -> argparse.ArgumentParser:
