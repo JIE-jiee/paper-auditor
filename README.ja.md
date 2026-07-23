@@ -15,7 +15,9 @@
 - LaTeX のラベル、相互参照、引用、参考文献キー。
 - 本文中の引用と参考文献リストの対応。
 - 文献の実在性、書誌メタデータ、撤回・訂正状況。
-- 要旨、本文、表、図、結論の間における数値の整合性。
+- 被引用文献の原文が論文中の主張を支持するかを、支持・部分的支持・不支持・検証不能に分けて判定。
+- 数式記号、初出時の定義、スコープ、次元、単位換算、百分率、セクション間の主要数値の整合性。
+- ASCE、ACI、AISC、Eurocode、GB、JGJ などの完全な規格番号、版、条項位置、式、適用範囲。
 - 目的、方法、結果、限界、結論、主張のつながり。
 - 図表が本文中の傾向、値、比較を実際に裏付けているか。
 
@@ -30,6 +32,14 @@ Word、LaTeX/BibTeX、PDF、Markdown、プレーンテキストに対応しま�
 | `targeted` | ユーザーが指定した項目だけを点検 |
 
 決定論的スクリプトは、書式、用語、引用、相互参照について再現可能なチェックを行います。意味内容、論理、主張、図版に関する総合的な判断は、`SKILL.md` の手順に従って Codex が行います。書誌メタデータの検証だけでは、文献が特定の主張を裏付けているかは判断できません。
+
+## 3つの中核エビデンスチェーン
+
+| 機能 | エビデンスチェーン | 超えてはならない境界 |
+| --- | --- | --- |
+| 引用の支持性 | 論文中の主張 → 引用位置 → 被引用文献の該当箇所 → 4段階判定 | 全文がなければ `unable_to_verify` とし、不支持の証拠にはしない |
+| 数式・単位・数値 | 記号/定義 → 単位と次元 → 計算 → セクション、表、図の照合 | 図からの推定値、弱い対応、未解決の式はレビュー候補にとどめる |
+| 工学規準 | 完全な番号/版 → 条項または式 → 制限と例外 → 研究への適用性 | 新版が自動的に支配版になるわけではなく、条項内容には正確な原文が必要 |
 
 ## Codex Skill としてインストール
 
@@ -70,6 +80,36 @@ python "<skill-root>\scripts\verify_references.py" "<bibliography-or-manuscript>
   --output-dir "<new-verification-dir>"
 ```
 
+数式・単位・数値の整合性：
+
+```powershell
+python "<skill-root>\scripts\quantitative_checks.py" "<manuscript.tex>" `
+  --quantity-profile "<skill-root>\references\quantity-profile.tsv" `
+  --output "<new-review-dir>\quantitative.json"
+```
+
+引用支持性の証拠準備と確定：
+
+```powershell
+python "<skill-root>\scripts\claim_support.py" prepare "<manuscript>" `
+  --references-json "<citation-review-dir>\references.json" `
+  --sources-dir "<lawful-local-paper-sources>" `
+  --output-dir "<new-claim-evidence-dir>" --scope priority
+
+python "<skill-root>\scripts\claim_support.py" finalize `
+  "<claim-evidence-dir>\claim-evidence.json" "<claim-decisions.json>" `
+  --output-dir "<new-claim-result-dir>"
+```
+
+工学規準台帳（既定はメタデータのみ）：
+
+```powershell
+python "<skill-root>\scripts\verify_standards.py" "<manuscript>" `
+  --output-dir "<new-standard-review-dir>"
+```
+
+規格全文は、明示的な `--source-map` が権利ゲートを通過した場合に限りローカルで処理します。ASCE と ACI については、出版社の許諾記録も必要です。
+
 プライバシー制御：
 
 ```text
@@ -82,6 +122,9 @@ python "<skill-root>\scripts\verify_references.py" "<bibliography-or-manuscript>
 - `review-report.md` — 人が読めるレビュー報告。
 - `findings.json` — ID、重要度、確信度、状態、位置、根拠、修正案を含む構造化データ。
 - `citation-report.md` と `references.json` — 別ディレクトリに保存される書誌検証結果。
+- `claim-evidence.json` と `claim-support.json` — 主張と原文の証拠チェーン、および最終判定。
+- `quantitative.json` — 記号、単位、次元、計算、反復値、レビュー候補。
+- `standards.json` と `standards-report.md` — 規格版の台帳、条項・適用性の確認タスク。
 
 既定では原稿を変更せず、結果は別のディレクトリに出力します。`--force` で上書きできるのは既存の報告ファイルだけであり、入力原稿や読み込んだ BibTeX ファイルは上書きしません。
 
@@ -92,6 +135,10 @@ python "<skill-root>\scripts\verify_references.py" "<bibliography-or-manuscript>
 | `references/personal-profile.json` | 既定モード、英語表記、重要度、プライバシー設定 |
 | `references/terminology.tsv` | 推奨用語、禁止用語、略語、別名 |
 | `references/domain-style.md` | 構造・地震工学の用語と推論ルール |
+| `references/claim-support.md` | 引用支持性の判定手順と決定形式 |
+| `references/quantity-profile.tsv` | 個人用の記号定義、次元、定義必須ルール |
+| `references/standards-registry.json` | 規格版メタデータと全文処理ポリシー |
+| `references/standards-verification.md` | 条項、式、適用性、権利ゲートの手順 |
 | `references/journal-benchmarks.md` | EESD、Engineering Structures、ASCE 各誌のスタイル基準 |
 | `references/personalization-guide.md` | 個人ルールを安全に更新する方法 |
 
@@ -101,6 +148,7 @@ python "<skill-root>\scripts\verify_references.py" "<bibliography-or-manuscript>
 - 既定のオンライン検証で送信するのは、DOI または最小限の題名・著者・年だけです。
 - `not_found` は十分な一致を確認できなかったという意味であり、捏造の証拠ではありません。
 - 引用文献が近くの主張を裏付けるかの判断には、原文または同等に直接的な証拠が必要です。
+- 規格 PDF がローカルに存在するだけでは自動処理の許可になりません。条項確認には明示的な権利表明と出版社許諾のゲートを適用します。
 - 本ツールは点検範囲と追跡可能性を高めますが、著者、専門家、編集者の最終判断に代わるものではありません。
 
 ## テスト
@@ -109,4 +157,4 @@ python "<skill-root>\scripts\verify_references.py" "<bibliography-or-manuscript>
 python -m unittest discover -s scripts -p "test_*.py" -v
 ```
 
-現行版には 32 件の回帰テストがあります。主要スクリプトは Python 標準ライブラリだけで動作し、PDF 抽出用の `pdftotext` は任意の依存関係です。
+現行版には 63 件の回帰テストがあります。主要スクリプトは Python 標準ライブラリだけで動作し、PDF 抽出用の `pdftotext` は任意の依存関係です。

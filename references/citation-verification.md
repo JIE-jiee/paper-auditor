@@ -21,6 +21,22 @@ Metadata can answer only the first three. Require the cited full text or direct 
 
 Preferred sources are publisher records, Crossref/DataCite, Retraction Watch production data, PubMed for biomedical material, arXiv for preprints, and discipline-specific authoritative repositories. Record URLs, access time, result status, and a response hash when a script performs the query.
 
+## Claim-support verification
+
+Metadata verification and claim-support verification are separate passes. After `verify_references.py` produces `references.json`, follow `references/claim-support.md`:
+
+```powershell
+python "<skill-root>\scripts\claim_support.py" prepare "<manuscript>" --references-json "<citation-review-dir>\references.json" --sources-dir "<lawful-local-paper-sources>" --output-dir "<new-claim-evidence-dir>" --scope priority
+```
+
+The prepare step locates each citation, separates citation clusters into claim-reference pairs, matches local source text, and ranks short evidence candidates. Retrieval score is only a search aid. Read the passage in context and record a decision for every pair. Then run:
+
+```powershell
+python "<skill-root>\scripts\claim_support.py" finalize "<claim-evidence-dir>\claim-evidence.json" "<claim-decisions.json>" --output-dir "<new-claim-result-dir>"
+```
+
+Use exactly `supports`, `partially_supports`, `does_not_support`, or `unable_to_verify`. `does_not_support` requires direct mismatch or contradiction evidence from accessible full text. Lack of full text, a low retrieval score, or a missing passage is never evidence of non-support. Preserve the manuscript claim, citation location, source identifier and hash, selected passage location, verdict, rationale, scope/quantity/population/method mismatch dimensions, and verification date.
+
 ## Status vocabulary
 
 - `verified`

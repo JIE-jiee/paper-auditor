@@ -1,0 +1,4 @@
+# Manuscript-specific quantity registry. Keep the header even when no symbols are configured.
+# Example (remove the leading # and adapt to the manuscript):
+# u_{res}	u_r|u_{residual}	residual displacement	length	mm	global	true
+canonical_symbol	aliases	meaning	dimension	canonical_unit	scope	require_definition

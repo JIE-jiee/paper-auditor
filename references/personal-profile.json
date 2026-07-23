@@ -1,5 +1,5 @@
 {
-  "profile_version": "0.1.0",
+  "profile_version": "0.2.0",
   "owner": "personal",
   "discipline": [
     "structural engineering",
@@ -19,6 +19,24 @@
     "allow_fulltext_external_upload": false,
     "allow_figure_external_upload": false,
     "crossref_mailto": ""
+  },
+  "claim_support": {
+    "default_scope": "priority",
+    "evidence_top_k": 5,
+    "require_fulltext_for_support": true,
+    "allow_open_access_download": false,
+    "formal_finding_min_confidence": 0.8
+  },
+  "quantitative": {
+    "enabled": true,
+    "relative_tolerance": 0.01,
+    "percentage_point_tolerance": 0.2,
+    "compare_sections": ["Abstract", "Results", "Discussion", "Conclusion", "Conclusions"]
+  },
+  "standards": {
+    "default_mode": "metadata-only",
+    "require_rights_attestation": true,
+    "fulltext_external_upload": false
   },
   "abbreviations": {
     "minimum_uses_after_definition": 2,

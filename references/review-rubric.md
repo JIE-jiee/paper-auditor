@@ -50,6 +50,13 @@ For each central claim, identify the manuscript location, scope, supporting meth
 
 Flag unsupported causal language, silent population or hazard generalization, comparison across non-equivalent baselines, circular novelty arguments, and conclusions that exceed tested parameters. Phrase debatable matters as questions.
 
+## Core evidence boundaries
+
+- Citation metadata establishes that a work exists and whether its bibliographic fields match; it does not establish support for the manuscript claim.
+- For every assessed claim-reference pair, use `supports`, `partially_supports`, `does_not_support`, or `unable_to_verify`. A non-support finding requires direct source text and an explicit mismatch or contradiction dimension. Missing full text can only be `unable_to_verify`.
+- A quantitative conflict is formal only when both values refer to the same metric, entity, condition, statistic, baseline, and compatible unit. Record both locations and the normalization or calculation. Ambiguous matches remain review candidates.
+- A standards finding about a clause, formula, or scope requires the exact edition and direct provision evidence. Metadata may establish an incomplete or mixed designation, but cannot establish provision content or applicability.
+
 ## Report schema
 
 Each `findings.json` item must contain:
@@ -62,14 +69,22 @@ Each `findings.json` item must contain:
   "confidence": 0.98,
   "status": "confirmed",
   "location": {"source": "paper.tex", "line": 42, "section": "Introduction"},
+  "related_locations": [{"source": "paper.tex", "line": 318, "section": "Conclusion"}],
   "quote": "...",
   "observation": "...",
   "expected": "...",
   "reason": "...",
   "evidence": [{"class": "A", "source": "manuscript"}],
+  "calculation": {
+    "expression": "(new - baseline) / baseline * 100",
+    "operands": ["baseline=0.40%", "new=0.20%"],
+    "normalized_unit": "%",
+    "result": "-50%",
+    "tolerance": "0.2 percentage points"
+  },
   "suggested_fix": "...",
   "auto_fixable": false
 }
 ```
 
-Keep quotations short. Never invent a page, line, paragraph, DOI, or source.
+`related_locations` and `calculation` are required only for cross-location or computed findings. Keep quotations short. Never invent a page, line, paragraph, DOI, standard clause, or source.

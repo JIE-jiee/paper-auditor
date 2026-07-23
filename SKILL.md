@@ -1,6 +1,6 @@
 ---
 name: paper-auditor
-description: Audit scholarly manuscripts for language and tense issues, abbreviation and terminology consistency, figure/table/equation callouts, citation-reference integrity and authenticity, quantitative consistency, technical logic, and claim consistency. Use for pre-submission review, manuscript quality control, reviewer-style critique, targeted checks of Word (.docx), LaTeX (.tex/.bib), PDF, Markdown, or plain-text papers, or when personalizing and updating manuscript-review rules, especially in structural and earthquake engineering, seismic resilience, and self-centering or rocking systems.
+description: Audit scholarly manuscripts for language and tense issues, abbreviation and terminology consistency, figure/table/equation callouts, citation-reference integrity and authenticity, claim-to-source support, formula/symbol/unit/value consistency, engineering-standard editions/clauses/applicability, technical logic, and claim consistency. Use for pre-submission review, manuscript quality control, reviewer-style critique, targeted checks of Word (.docx), LaTeX (.tex/.bib), PDF, Markdown, or plain-text papers, or when personalizing and updating manuscript-review rules, especially in structural and earthquake engineering, seismic resilience, and self-centering or rocking systems.
 ---
 
 # Paper Auditor
@@ -13,7 +13,9 @@ Read `references/personal-profile.json` and `references/terminology.tsv` before 
 
 - Read `references/review-rubric.md` for severity, confidence, evidence, tense, logic, and report rules.
 - Read `references/citation-verification.md` before checking references or claims against external sources.
+- Read `references/claim-support.md` before judging whether a cited source supports the nearby manuscript claim.
 - Read `references/domain-style.md` for structural and earthquake engineering terminology and reasoning checks.
+- Read `references/standards-verification.md` before checking engineering-standard editions, clauses, formulas, or applicability.
 - Read `references/journal-benchmarks.md` when the user names EESD, Engineering Structures, ASCE, or asks for journal-style review.
 - Read `references/personalization-guide.md` when the user asks to add, remove, or change personal review rules.
 - Read `references/tooling-reference.md` only when the user asks how the Skill was designed or wants optional open-source integrations.
@@ -60,7 +62,17 @@ Review sentence-level grammar and section-level tense in context. Do not enforce
 
 Build a ledger for important concepts, symbols, units, abbreviations, component names, and hyphenation. Distinguish intentional technical differences from accidental synonyms. Flag a term as technically wrong only when supported by the manuscript's definition, the personal glossary, a named standard, or authoritative literature.
 
-### 4. Claim and logic pass
+### 4. Formula, unit, and numeric pass
+
+For UTF-8 LaTeX, Markdown, or plain text, run the local quantitative checker:
+
+```powershell
+python "<skill-root>\scripts\quantitative_checks.py" "<manuscript>" --quantity-profile "<skill-root>\references\quantity-profile.tsv" --output "<new-review-dir>\quantitative.json"
+```
+
+Use the output to build ledgers for symbols, definitions, units, repeated quantities, percentages, and cross-section values. Recompute explicit percentages and unit conversions. Compare key values across abstract, methods, results, figures/tables, and conclusions. Treat profile-backed dimension conflicts and directly reproducible calculations as formal findings. Keep unresolved formulas, weak cross-section matches, and figure-peak extraction as review candidates until semantic or visual evidence confirms them. For Word or PDF, perform the same checks from anchored extraction and rendered pages; do not pretend the UTF-8 checker parsed those formats.
+
+### 5. Claim and logic pass
 
 Read the complete manuscript before finalizing findings. Build a compact claim ledger spanning title, abstract, introduction, methods, results, discussion, and conclusions. Check:
 
@@ -73,7 +85,7 @@ Read the complete manuscript before finalizing findings. Build a compact claim l
 
 In `deep` mode, delegate independent language/terminology, logic/claims, citations, and figures/tables passes when parallel review materially helps. Give a separate reviewer only the raw manuscript and this skill; do not reveal expected defects. Independently recheck every Blocker or Major semantic finding.
 
-### 5. Citation pass
+### 6. Citation and claim-support pass
 
 First check in-text citations against the reference list. Then, when online verification is authorized, resolve the script from the Skill root and run:
 
@@ -92,13 +104,37 @@ Never equate `not_found` with fabrication. Separate:
 
 Require the source text or equally direct evidence for item 4.
 
-### 6. Visual pass
+For important or disputed claims, prepare a source-by-source evidence chain from the manuscript claim to each cited work:
+
+```powershell
+python "<skill-root>\scripts\claim_support.py" prepare "<manuscript>" --references-json "<citation-review-dir>\references.json" --sources-dir "<lawful-local-paper-sources>" --output-dir "<new-claim-evidence-dir>" --scope priority
+```
+
+Review the returned candidate passages, record one decision for every claim-reference pair in `claim-decisions.json` as specified by `references/claim-support.md`, then finalize:
+
+```powershell
+python "<skill-root>\scripts\claim_support.py" finalize "<claim-evidence-dir>\claim-evidence.json" "<claim-decisions.json>" --output-dir "<new-claim-result-dir>"
+```
+
+Use only `supports`, `partially_supports`, `does_not_support`, or `unable_to_verify`. A citation cluster must be assessed source by source. Missing full text can only produce `unable_to_verify`; `does_not_support` requires direct mismatch or contradiction evidence from the cited source. Do not enable open-access downloading unless the user explicitly authorizes it.
+
+### 7. Engineering-standard pass
+
+When standards are mentioned, first build a metadata-only edition and locator ledger:
+
+```powershell
+python "<skill-root>\scripts\verify_standards.py" "<manuscript>" --output-dir "<new-standard-review-dir>"
+```
+
+Check complete designation, edition, amendments/errata, and mixed editions. A newer registry publication does not automatically govern the study. Clause, equation, table, figure, and applicability findings require the exact edition and direct evidence. Full-text processing is blocked unless an explicit `--source-map` passes the rights policy in `references/standards-verification.md`; ASCE and ACI entries also require a recorded publisher-permission reference. Never reconstruct standard text from memory or secondary guides.
+
+### 8. Visual pass
 
 Inspect the rendered PDF or rendered Word pages in `deep` mode. Verify legibility, panel labels, captions, symbols, units, legends, numbering, sequential callouts, and agreement between visual trends and prose. Do not infer unreadable values. Label OCR or extraction uncertainty.
 
 ## Produce the report
 
-Create `review-report.md` and `findings.json` in a separate review directory. Preserve deterministic outputs and add semantic findings using the same schema.
+Create `review-report.md` and `findings.json` in a separate review directory. Preserve deterministic outputs and add semantic findings using the same schema. Merge confirmed findings from `quantitative.json`, `claim-support.json`, and `standards.json`; preserve their evidence candidates, review tasks, and unable-to-verify results without promoting them to defects.
 
 For every formal finding include:
 
@@ -106,6 +142,7 @@ For every formal finding include:
 - severity and confidence as separate fields;
 - status (`confirmed`, `likely`, `needs-review`, or `unable-to-verify`);
 - source anchor and short quotation;
+- related source anchors and a reproducible calculation when a cross-location or numeric conflict is involved;
 - observation, expected state, reason, and concrete suggestion;
 - evidence source and verification date when external facts are involved;
 - whether a safe automatic fix is possible.

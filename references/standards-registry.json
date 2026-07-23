@@ -1,0 +1,82 @@
+{
+  "schema_version": "0.2.0",
+  "checked_at": "2026-07-23",
+  "purpose": "Designation and scope metadata only. This file does not contain copyrighted clauses or formulas and does not decide which edition governs a project.",
+  "standards": [
+    {
+      "family": "ASCE/SEI 7",
+      "canonical_designation": "ASCE/SEI 7-22",
+      "accepted_designations": ["ASCE 7-22", "ASCE/SEI 7-22"],
+      "current_publication": true,
+      "fulltext_processing_policy": "permission-required",
+      "terms_url": "https://www.asce.org/about-asce/terms-conditions/",
+      "rights_note": "Do not process ASCE full text unless the user attests lawful possession and records publisher permission for the intended automated processing.",
+      "title": "Minimum Design Loads and Associated Criteria for Buildings and Other Structures",
+      "official_url": "https://www.asce.org/publications-and-news/codes-and-standards/asce-sei-7-22",
+      "scope": ["loads", "load combinations", "seismic", "wind", "snow", "flood", "tsunami", "fire"],
+      "edition_note": "The governing building code or jurisdiction may still adopt an earlier edition. Treat an older edition as a review question, not an automatic error. Check supplements, errata, and interpretations separately."
+    },
+    {
+      "family": "ACI 318",
+      "canonical_designation": "ACI CODE-318-25",
+      "accepted_designations": ["ACI 318-25", "ACI CODE-318-25"],
+      "current_publication": true,
+      "fulltext_processing_policy": "permission-required",
+      "terms_url": "https://www.concrete.org/copyright.aspx",
+      "rights_note": "Do not process ACI full text unless the user attests lawful possession and records publisher permission for the intended automated processing.",
+      "title": "Building Code for Structural Concrete—Code Requirements and Commentary",
+      "official_url": "https://www.concrete.org/topicsinconcrete/318buildingcodeportal.aspx",
+      "scope": ["structural concrete", "materials", "analysis", "strength", "serviceability", "durability", "detailing", "seismic design"],
+      "edition_note": "ACI 318-19 and ACI CODE-318-19(22) remain relevant where adopted. Confirm the governing code before calling an earlier edition wrong."
+    },
+    {
+      "family": "AISC 360",
+      "canonical_designation": "ANSI/AISC 360-22",
+      "accepted_designations": ["AISC 360-22", "ANSI/AISC 360-22"],
+      "current_publication": true,
+      "fulltext_processing_policy": "rights-attestation-required",
+      "title": "Specification for Structural Steel Buildings",
+      "official_url": "https://www.aisc.org/news/aisc-releases-new-version-of-specification-for-structural-steel-buildings-ansiaisc-360-22/",
+      "scope": ["structural steel", "analysis", "stability", "member strength", "connections", "fabrication"],
+      "edition_note": "Check AISC revisions and errata in addition to the base designation."
+    },
+    {
+      "family": "AISC 341",
+      "canonical_designation": "ANSI/AISC 341-22",
+      "accepted_designations": ["AISC 341-22", "ANSI/AISC 341-22"],
+      "current_publication": true,
+      "fulltext_processing_policy": "rights-attestation-required",
+      "title": "Seismic Provisions for Structural Steel Buildings",
+      "official_url": "https://www.aisc.org/aisc/publications/seismic-design-manual/",
+      "scope": ["structural steel", "seismic force resisting systems", "ductility", "detailing", "connections", "quality assurance"],
+      "edition_note": "Applicability depends on the selected seismic force-resisting system and the governing building code."
+    }
+  ],
+  "families_requiring_part_or_local_adoption": [
+    {
+      "family": "EN 1990-1999",
+      "fulltext_processing_policy": "rights-attestation-required",
+      "designation_pattern": "EN 199x[-part]:year",
+      "official_url": "https://eurocodes.jrc.ec.europa.eu/second-generation-eurocodes",
+      "requirements": ["part", "publication year", "national adoption or National Annex where applicable"],
+      "note": "Second-generation Eurocodes are in a transition period. Verify the exact part and the nationally adopted text; do not treat 'Eurocode 8' alone as a reproducible citation."
+    },
+    {
+      "family": "GB engineering standards",
+      "fulltext_processing_policy": "rights-attestation-required",
+      "designation_pattern": "GB or GB/T number-year",
+      "official_url": "https://www.mohurd.gov.cn/",
+      "requirements": ["prefix", "standard number", "edition year", "official title"],
+      "note": "Verify engineering-construction standards through the responsible Chinese ministry or an authoritative official catalogue. Do not redistribute standard text."
+    },
+    {
+      "family": "JGJ engineering standards",
+      "fulltext_processing_policy": "rights-attestation-required",
+      "designation_pattern": "JGJ or JGJ/T number-year",
+      "official_url": "https://www.mohurd.gov.cn/",
+      "requirements": ["prefix", "standard number", "edition year", "official title"],
+      "note": "Confirm whether the document is mandatory JGJ or recommended JGJ/T and whether it remains in force."
+    }
+  ],
+  "copyright_boundary": "Store only metadata and links in the Skill. Never read standard full text merely because a local file is discoverable. Require an explicit source-map rights attestation; where publisher terms restrict automated processing, also require a recorded permission reference."
+}

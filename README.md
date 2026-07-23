@@ -15,7 +15,9 @@
 - LaTeX 标签、交叉引用、引文和参考文献键；
 - 正文引文与参考文献表的一一对应；
 - 文献是否真实存在、书目信息是否准确，以及撤稿或更正状态；
-- 摘要、正文、图表和结论之间的数值一致性；
+- 引用处主张是否被被引文献原文支持，并区分支持、部分支持、不支持和无法核验；
+- 公式符号、首次定义、作用域、量纲、单位换算、百分比及跨章节关键数值一致性；
+- ASCE、ACI、AISC、Eurocode、GB 与 JGJ 等工程标准的完整代号、版本、条款定位、公式与适用范围；
 - 研究目的、方法、结果、局限与结论之间的逻辑和观点一致性；
 - 图表证据是否真正支持正文中的趋势、幅值和比较结论。
 
@@ -30,6 +32,14 @@
 | `targeted` | 只检查用户指定的类别 |
 
 确定性脚本负责可复现的格式、术语、引用和交叉引用检查；完整的语义、逻辑、观点和图表判断由 Codex 按 `SKILL.md` 中的审核流程完成。书目元数据核验不等于判断文献是否支持某项具体观点。
+
+## 三条核心证据链
+
+| 能力 | 证据链 | 不越过的边界 |
+| --- | --- | --- |
+| 引文支持性 | 论文主张 → 引用位置 → 被引来源原文 → 四级结论 | 缺少全文只能标记“无法核验”，不能据此认定不支持 |
+| 公式、单位与数值 | 符号/定义 → 单位与量纲 → 计算 → 跨章节、表格和图件复核 | 图中估读值、弱匹配和未解析公式只作为复核候选 |
+| 工程标准 | 完整代号/版本 → 条款或公式 → 限制与例外 → 研究适用范围 | 新版不自动等于控制版本；无准确正文不得判断条款内容 |
 
 ## 安装为 Codex Skill
 
@@ -70,6 +80,36 @@ python "<skill-root>\scripts\verify_references.py" "<bibliography-or-manuscript>
   --output-dir "<new-verification-dir>"
 ```
 
+公式、单位与数值一致性：
+
+```powershell
+python "<skill-root>\scripts\quantitative_checks.py" "<manuscript.tex>" `
+  --quantity-profile "<skill-root>\references\quantity-profile.tsv" `
+  --output "<new-review-dir>\quantitative.json"
+```
+
+引文支持性证据准备与定稿：
+
+```powershell
+python "<skill-root>\scripts\claim_support.py" prepare "<manuscript>" `
+  --references-json "<citation-review-dir>\references.json" `
+  --sources-dir "<lawful-local-paper-sources>" `
+  --output-dir "<new-claim-evidence-dir>" --scope priority
+
+python "<skill-root>\scripts\claim_support.py" finalize `
+  "<claim-evidence-dir>\claim-evidence.json" "<claim-decisions.json>" `
+  --output-dir "<new-claim-result-dir>"
+```
+
+工程标准台账（默认仅核验元数据）：
+
+```powershell
+python "<skill-root>\scripts\verify_standards.py" "<manuscript>" `
+  --output-dir "<new-standard-review-dir>"
+```
+
+标准全文只在显式 `--source-map` 通过权利声明后本地处理；ASCE 与 ACI 还要求记录出版方许可依据。
+
 隐私控制选项：
 
 ```text
@@ -82,6 +122,9 @@ python "<skill-root>\scripts\verify_references.py" "<bibliography-or-manuscript>
 - `review-report.md`：便于阅读的审核报告；
 - `findings.json`：含稳定 ID、严重度、置信度、状态、位置、证据和修改建议的结构化结果；
 - `citation-report.md` 与 `references.json`：单独目录中的书目核验结果。
+- `claim-evidence.json` 与 `claim-support.json`：逐条主张—来源证据链及最终支持性结论；
+- `quantitative.json`：符号、单位、量纲、计算、重复数值和人工复核候选；
+- `standards.json` 与 `standards-report.md`：标准版本台账、条款任务与适用性复核入口。
 
 默认不修改原稿，报告写入独立目录。`--force` 只允许覆盖既有报告，不允许覆盖输入原稿或已读取的 BibTeX 源文件。
 
@@ -92,6 +135,10 @@ python "<skill-root>\scripts\verify_references.py" "<bibliography-or-manuscript>
 | `references/personal-profile.json` | 默认模式、英语变体、严重度和隐私偏好 |
 | `references/terminology.tsv` | 首选术语、禁用词、缩写和别名 |
 | `references/domain-style.md` | 结构与地震工程的术语和推理规则 |
+| `references/claim-support.md` | 引文支持性判定流程与决策格式 |
+| `references/quantity-profile.tsv` | 个人符号含义、量纲与必须定义规则 |
+| `references/standards-registry.json` | 标准版本元数据与全文处理策略 |
+| `references/standards-verification.md` | 标准条款、公式、适用性和授权门控流程 |
 | `references/journal-benchmarks.md` | EESD、Engineering Structures 与 ASCE 期刊风格基准 |
 | `references/personalization-guide.md` | 安全修改个人规则的方法 |
 
@@ -101,6 +148,7 @@ python "<skill-root>\scripts\verify_references.py" "<bibliography-or-manuscript>
 - 默认在线核验只发送 DOI，或最少量的题名、作者、年份元数据；
 - `not_found` 只表示没有找到足够可靠的匹配，不能据此认定文献伪造；
 - 判断“引文是否支持附近观点”仍需要阅读原文或同等直接证据；
+- 仅在本地发现标准 PDF 不代表获得自动处理授权；标准条款核验遵循显式权利声明和出版方许可门槛；
 - 本工具用于提高审核覆盖率和可复核性，不能替代作者、领域专家或期刊编辑的最终判断。
 
 ## 测试
@@ -109,4 +157,4 @@ python "<skill-root>\scripts\verify_references.py" "<bibliography-or-manuscript>
 python -m unittest discover -s scripts -p "test_*.py" -v
 ```
 
-当前版本包含 32 项回归测试，核心脚本只依赖 Python 标准库；PDF 提取工具 `pdftotext` 为可选依赖。
+当前版本包含 63 项回归测试，核心脚本只依赖 Python 标准库；PDF 提取工具 `pdftotext` 为可选依赖。
