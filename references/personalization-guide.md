@@ -29,15 +29,18 @@ Invalid severity names are configuration errors; they must not be silently used.
 ## Which settings act where
 
 The deterministic CLI enforces the abbreviation whitelist and use threshold,
-separate abstract/body definition switch, terminology table, English variant,
+separate abstract/body definition switch, the preference to keep using an
+abbreviation after its first definition, terminology table, English variant,
 number-unit and percent spacing, unused label/BibTeX checks, hard-coded LaTeX
 cross-reference switch, and severity overrides.
 
 The reviewing agent uses `default_mode`, journal priority, preferred figure and
 equation tokens, title-abbreviation preference, domain list, and document types
-during semantic, visual, and journal-specific passes. These fields are not all
-standalone regex checks because their correctness depends on article type and
-context.
+during semantic, visual, and journal-specific passes. It also applies the
+owner-specific `tense` policy: completed study actions use past tense, while
+general conclusions and proposed-model performance use present tense. These
+fields are not all standalone regex checks because their correctness depends on
+article type and context.
 
 ## Recommended customization cycle
 

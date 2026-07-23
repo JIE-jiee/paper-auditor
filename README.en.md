@@ -8,8 +8,9 @@ A customizable Codex Skill for evidence-led, pre-submission manuscript review. I
 
 ## What it checks
 
-- Grammar, context-aware tense, and English variants;
-- First-use definitions and consistency of abbreviations;
+- Grammar and English variants;
+- Past tense for completed study work; present tense for general conclusions and proposed-model performance;
+- Separate first-use definitions in the abstract and main text, followed by consistent abbreviation use;
 - Terminology, notation, units, hyphenation, and component names;
 - Figure, table, and equation numbering, callouts, and semantic agreement;
 - LaTeX labels, cross-references, citations, and bibliography keys;

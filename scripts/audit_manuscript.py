@@ -722,6 +722,13 @@ def _phrase_pattern(value: str) -> re.Pattern[str]:
     return re.compile(rf"(?<![A-Za-z0-9]){escaped}(?![A-Za-z0-9])", re.IGNORECASE)
 
 
+def _abbreviation_bool(config: dict[str, Any], key: str, default: bool) -> bool:
+    value = config.get(key, default)
+    if not isinstance(value, bool):
+        raise AuditError(f"profile.abbreviations.{key} 必须是布尔值。")
+    return value
+
+
 def _crossref_kind(label: str) -> str:
     folded = label.casefold()
     if folded.startswith("fig"):
@@ -999,20 +1006,130 @@ class Auditor:
                     return candidate
         return None
 
+    @staticmethod
+    def _is_definition_expansion(
+        text: str,
+        expansion_match: re.Match[str],
+        abbreviation_start: int,
+        abbreviation_end: int,
+    ) -> bool:
+        if expansion_match.end() <= abbreviation_start:
+            between = text[expansion_match.end() : abbreviation_start]
+            after_abbreviation = text[abbreviation_end:]
+            return bool(
+                re.fullmatch(r"\s*\(\s*", between)
+                and re.match(r"\s*\)", after_abbreviation)
+            )
+        if expansion_match.start() >= abbreviation_end:
+            between = text[abbreviation_end : expansion_match.start()]
+            after_expansion = text[expansion_match.end() :]
+            return bool(
+                re.fullmatch(r"\s*\(\s*", between)
+                and re.match(r"\s*\)", after_expansion)
+            )
+        return False
+
+    @staticmethod
+    def _is_shadowed_by_longer_known_expansion(
+        text: str,
+        expansion_match: re.Match[str],
+        current_expansion: str,
+        known_patterns: list[tuple[str, re.Pattern[str]]],
+    ) -> bool:
+        current_length = len(_normalize_phrase(current_expansion))
+        for normalized_expansion, pattern in known_patterns:
+            if len(normalized_expansion) <= current_length:
+                continue
+            for longer_match in pattern.finditer(text):
+                if not (
+                    longer_match.start() <= expansion_match.start()
+                    and longer_match.end() >= expansion_match.end()
+                ):
+                    continue
+                return True
+        return False
+
+    @staticmethod
+    def _abbreviation_windows(unit: SourceUnit) -> list[dict[str, Any]]:
+        windows: list[dict[str, Any]] = []
+        current: list[Block] = []
+        structure_lines = unit.structure.splitlines()
+
+        def append_window(window_blocks: list[Block]) -> None:
+            if not window_blocks:
+                return
+            offsets: dict[int, int] = {}
+            line_offsets: list[int] = []
+            scan_parts: list[str] = []
+            raw_parts: list[str] = []
+            cursor = 0
+            for block in window_blocks:
+                offsets[id(block)] = cursor
+                line_offsets.append(cursor)
+                scan_parts.append(block.scan)
+                raw_parts.append(block.raw)
+                cursor += len(block.scan) + 1
+            windows.append(
+                {
+                    "blocks": list(window_blocks),
+                    "scope": window_blocks[0].scope,
+                    "section": window_blocks[0].section,
+                    "scan": "\n".join(scan_parts),
+                    "raw": "\n".join(raw_parts),
+                    "offsets": offsets,
+                    "line_offsets": line_offsets,
+                }
+            )
+
+        def flush() -> None:
+            nonlocal current
+            append_window(current)
+            current = []
+
+        for block in unit.blocks:
+            structure_line = (
+                structure_lines[block.line - 1]
+                if block.line <= len(structure_lines)
+                else block.raw
+            )
+            is_heading = bool(
+                unit.heading_lines.get(block.line) or _recognize_heading(structure_line)
+            )
+            if block.is_reference_section or not block.scan.strip():
+                flush()
+                continue
+            if is_heading:
+                flush()
+                append_window([block])
+                continue
+            if current and (
+                current[0].scope != block.scope or current[0].section != block.section
+            ):
+                flush()
+            current.append(block)
+        flush()
+        return windows
+
     def check_abbreviations(self) -> None:
         occurrences: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
         inventory: dict[str, dict[str, Any]] = {}
         abbreviation_config = self.profile.get("abbreviations", {})
-        separate_scopes = bool(
-            abbreviation_config.get("require_definition_in_abstract_and_main_text", True)
+        separate_scopes = _abbreviation_bool(
+            abbreviation_config, "require_definition_in_abstract_and_main_text", True
         )
-        for block in self.blocks:
+        require_short_form = _abbreviation_bool(
+            abbreviation_config, "require_abbreviation_after_definition", False
+        )
+        blocks = self.blocks
+        block_order = {id(block): index for index, block in enumerate(blocks)}
+        for block in blocks:
             for match in self._candidate_abbreviations(block):
                 abbreviation = match.group(1)
                 expansion = self._definition_for(block, match)
                 occurrence = {
                     "block": block,
                     "start": match.start(),
+                    "end": match.end(),
                     "expansion": expansion,
                 }
                 ledger_scope = block.scope if separate_scopes else "document"
@@ -1024,6 +1141,45 @@ class Auditor:
                 item[f"{block.scope}_uses"] += 1
                 if expansion and expansion not in item["definitions"]:
                     item["definitions"].append(expansion)
+
+        known_expansions = {
+            value.strip()
+            for values in self.known_expansions.values()
+            for value in values
+            if value.strip()
+        }
+        canonical_unit_definitions: dict[tuple[str, str, int], dict[str, Any]] = {}
+        for ledger_key, ledger_items in occurrences.items():
+            ledger_definitions = [item for item in ledger_items if item["expansion"]]
+            known_expansions.update(
+                str(item["expansion"]).strip() for item in ledger_definitions
+            )
+            normalized = {
+                _normalize_phrase(item["expansion"]) for item in ledger_definitions
+            }
+            if ledger_definitions and len(normalized) == 1:
+                abbreviation, scope = ledger_key
+                for definition in ledger_definitions:
+                    unit_key = (abbreviation, scope, id(definition["block"].unit))
+                    canonical_unit_definitions.setdefault(unit_key, definition)
+
+        known_patterns = [
+            (_normalize_phrase(value), _phrase_pattern(value))
+            for value in sorted(
+                known_expansions,
+                key=lambda item: (-len(_normalize_phrase(item)), item.casefold()),
+            )
+            if _normalize_phrase(value)
+        ]
+        windows_by_unit: dict[int, list[dict[str, Any]]] = {}
+        window_by_block: dict[int, tuple[int, dict[str, Any]]] = {}
+        if require_short_form:
+            for unit in self.units:
+                unit_windows = self._abbreviation_windows(unit)
+                windows_by_unit[id(unit)] = unit_windows
+                for window_index, window in enumerate(unit_windows):
+                    for block in window["blocks"]:
+                        window_by_block[id(block)] = (window_index, window)
 
         minimum = int(abbreviation_config.get("minimum_uses_after_definition", 2))
         for (abbreviation, scope), items in sorted(occurrences.items()):
@@ -1079,12 +1235,115 @@ class Auditor:
                     key=f"{abbreviation}|{scope}|multiple-expansions",
                 )
 
+            long_form_after_definition_count = 0
+            if require_short_form:
+                unit_definitions = [
+                    definition
+                    for (candidate, candidate_scope, _), definition in (
+                        canonical_unit_definitions.items()
+                    )
+                    if candidate == abbreviation and candidate_scope == scope
+                ]
+                for first_definition in sorted(
+                    unit_definitions,
+                    key=lambda item: block_order[id(item["block"])],
+                ):
+                    definition_block = first_definition["block"]
+                    definition_window_entry = window_by_block.get(id(definition_block))
+                    if definition_window_entry is None:
+                        continue
+                    definition_window_index, definition_window = definition_window_entry
+                    definition_offset = definition_window["offsets"][id(definition_block)]
+                    definition_start = definition_offset + int(first_definition["start"])
+                    definition_end = definition_offset + int(first_definition["end"])
+                    expansion = str(first_definition["expansion"])
+                    expansion_pattern = _phrase_pattern(expansion)
+                    unit_windows = windows_by_unit[id(definition_block.unit)]
+                    for window_index, window in enumerate(unit_windows):
+                        ledger_scope = window["scope"] if separate_scopes else "document"
+                        if window_index < definition_window_index or ledger_scope != scope:
+                            continue
+                        for expansion_match in expansion_pattern.finditer(window["scan"]):
+                            is_definition = bool(
+                                window is definition_window
+                                and self._is_definition_expansion(
+                                    window["scan"],
+                                    expansion_match,
+                                    definition_start,
+                                    definition_end,
+                                )
+                            )
+                            if (
+                                window is definition_window
+                                and expansion_match.start() < definition_end
+                                and not is_definition
+                            ):
+                                continue
+                            if is_definition:
+                                continue
+                            if self._is_shadowed_by_longer_known_expansion(
+                                window["scan"],
+                                expansion_match,
+                                expansion,
+                                known_patterns,
+                            ):
+                                continue
+                            line_index = max(
+                                0,
+                                bisect.bisect_right(
+                                    window["line_offsets"], expansion_match.start()
+                                )
+                                - 1,
+                            )
+                            block = window["blocks"][line_index]
+                            local_start = (
+                                expansion_match.start() - window["line_offsets"][line_index]
+                            )
+                            displayed_expansion = re.sub(
+                                r"\s+", " ", expansion_match.group(0)
+                            ).strip()
+                            long_form_after_definition_count += 1
+                            self.add_finding(
+                                category="abbreviation",
+                                check_id="abbreviation-long-form-after-definition",
+                                severity="Minor",
+                                confidence=0.99,
+                                status="confirmed",
+                                block=block,
+                                quote=_short_quote(
+                                    window["raw"],
+                                    expansion_match.start(),
+                                    expansion_match.end(),
+                                ),
+                                observation=(
+                                    f"缩写 {abbreviation} 已在{scope_label}中定义，但后文再次使用"
+                                    f"全称“{displayed_expansion}”。"
+                                ),
+                                expected=(
+                                    f"{scope_label}首次定义后，后续统一使用 {abbreviation}。"
+                                ),
+                                reason=(
+                                    "个人规则要求摘要与正文分别建立缩写账本，并在各自首次定义后"
+                                    "统一使用缩写，以保持行文简洁。"
+                                ),
+                                suggested_fix=(
+                                    f"若保留该缩写，将此处全称改为 {abbreviation}；若术语全文出现"
+                                    "次数很少，则删除缩写定义并统一使用全称。"
+                                ),
+                                auto_fixable=False,
+                                key=(
+                                    f"{abbreviation}|{scope}|long-form-after-definition|"
+                                    f"{block.unit.source}|{block.line}|{local_start}"
+                                ),
+                                evidence_source="personal style profile",
+                            )
+
             if definitions:
                 first_definition_index = items.index(definitions[0])
                 uses_after = sum(
                     1 for item in items[first_definition_index + 1 :] if not item["expansion"]
                 )
-                if uses_after < minimum:
+                if uses_after < minimum and long_form_after_definition_count == 0:
                     self.add_finding(
                         category="abbreviation",
                         check_id="abbreviation-low-use",

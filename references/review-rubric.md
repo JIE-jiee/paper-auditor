@@ -29,13 +29,18 @@ Blocker and Major semantic findings require independent rechecking and at least 
 
 Treat tense as discourse-dependent:
 
-- use present tense for established knowledge, paper organization, mathematical relationships, and what a displayed figure or table shows;
-- use past tense for actions completed in the reported study and specific observed test events;
+- use past tense for research work completed in the reported study, including experimental, analytical, calibration, and data-processing actions;
+- use present tense for established knowledge, paper organization, mathematical relationships, what a displayed figure or table shows, and general conclusions that remain valid;
+- describe the performance, capability, or behavior of the proposed model/system in the present tense (for example, "The proposed model accurately predicts ..."); describe its completed development, calibration, or test procedure in the past tense;
 - use present perfect for a research trend extending to the present when appropriate;
 - allow results and discussion to alternate between past observations and present interpretation;
 - flag unexplained switching within the same rhetorical function, not every mixed tense.
 
-Do not rewrite all Methods or Results sentences to one tense without checking meaning.
+This owner-specific policy is the default unless a target journal explicitly requires otherwise. Do not rewrite all Methods or Results sentences to one tense without checking meaning.
+
+## Abbreviation policy
+
+Treat the abstract and main text as independent abbreviation scopes. In each scope, write the full term followed by its abbreviation at first use. After that definition, use the abbreviation consistently rather than returning to the full term. A new independent scope may define it again. Do not force abbreviations from the whitelist to be defined, and do not replace a full term automatically when grammar or referent remains ambiguous.
 
 ## Consistency policy
 
