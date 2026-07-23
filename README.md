@@ -4,49 +4,23 @@
 
 # Paper Auditor
 
-一套可个人定制的 Codex 论文审核 Skill，用于在投稿前对学术论文进行基于证据的系统检查。它重点适配结构工程、地震工程、抗震韧性、自复位与摇摆体系，也可以通过个人配置和术语表扩展到其他研究方向。
+Paper Auditor 是一位有点较真的投稿前读者。把稿子交给它，它会记住你前面怎样定义缩写，回头核对摘要和结论里的数字，也会顺着关键引用往原文追。
 
-## 主要检查内容
+> 摘要里是 2.0%，为什么到了结论变成 3.0%？
+>
+> 这篇文献确实存在，但它真的支持这里的观点吗？
+>
+> 这个缩写已经定义过了，后面怎么又写回了全称？
+>
+> 这项试验已经完成，这句话为什么还在用现在时？
 
-- 语法与英语变体；
-- 已开展的研究工作使用过去时，通用结论与所提模型性能使用现在时；
-- 摘要与正文分别首次定义缩写，定义后统一使用缩写；
-- 专业术语、符号、单位、连字符和构件名称；
-- 图、表、公式的编号、正文引用与语义对应；
-- LaTeX 标签、交叉引用、引文和参考文献键；
-- 正文引文与参考文献表的一一对应；
-- 文献是否真实存在、书目信息是否准确，以及撤稿或更正状态；
-- 引用处主张是否被被引文献原文支持，并区分支持、部分支持、不支持和无法核验；
-- 公式符号、首次定义、作用域、量纲、单位换算、百分比及跨章节关键数值一致性；
-- ASCE、ACI、AISC、Eurocode、GB 与 JGJ 等工程标准的完整代号、版本、条款定位、公式与适用范围；
-- 研究目的、方法、结果、局限与结论之间的逻辑和观点一致性；
-- 图表证据是否真正支持正文中的趋势、幅值和比较结论。
-- 审核输入、证据锚点、各审核 pass 和最终报告是否使用同一版本；未执行或证据不足的项目不会冒充“无问题”。
+它会从行文一路检查到证据和全文一致性。能确认的问题会带上原文位置、依据、严重程度和修改建议；材料不够时，它会明确写出“无法核验”，不会替你猜。原稿默认保持不变。
 
-支持 Word、LaTeX/BibTeX、PDF、Markdown 和纯文本。PDF 文本提取在需要时依赖 `pdftotext`。
+它现在主要面向结构工程、地震工程、抗震韧性、自复位与摇摆体系，并参考 EESD、Engineering Structures 和 ASCE Journal of Structural Engineering 的代表性论文风格。Word、LaTeX/BibTeX、PDF、Markdown 和纯文本都可以作为输入。
 
-## 审核方式
+## 快速开始
 
-| 模式 | 适用场景 |
-| --- | --- |
-| `fast` | 确定性检查，加一次聚焦的编辑扫描 |
-| `deep` | 完整投稿前审核，包括语义、逻辑、图表和书目核验 |
-| `targeted` | 只检查用户指定的类别 |
-
-确定性脚本负责可复现的格式、术语、引用和交叉引用检查；完整的语义、逻辑、观点和图表判断由 Codex 按 `SKILL.md` 中的审核流程完成。书目元数据核验不等于判断文献是否支持某项具体观点。
-
-## 四条核心证据链
-
-| 能力 | 证据链 | 不越过的边界 |
-| --- | --- | --- |
-| 引文支持性 | 论文主张 → 引用位置 → 被引来源原文 → 四级结论 | 缺少全文只能标记“无法核验”，不能据此认定不支持 |
-| 公式、单位与数值 | 符号/定义 → 单位与量纲 → 计算 → 跨章节、表格和图件复核 | 图中估读值、弱匹配和未解析公式只作为复核候选 |
-| 工程标准 | 完整代号/版本 → 条款或公式 → 限制与例外 → 研究适用范围 | 新版不自动等于控制版本；无准确正文不得判断条款内容 |
-| 审核完整性 | 输入 manifest → 统一证据台账 → pass 覆盖状态 → 确定性裁决 | 输入改变标记 `stale`；pass 结果改变或缺失标记 `incomplete` |
-
-## 安装为 Codex Skill
-
-将整个仓库克隆到个人 Skill 目录，并保留 `SKILL.md`、`references/` 和 `scripts/` 的相对位置。
+### 1. 装进 Codex
 
 Windows PowerShell：
 
@@ -60,25 +34,101 @@ macOS / Linux：
 git clone https://github.com/JIE-jiee/paper-auditor.git "$HOME/.codex/skills/paper-auditor"
 ```
 
-然后新建一个 Codex 任务，例如：
+安装后新建一个 Codex 任务。
+
+### 2. 把这段话交给 Codex
 
 ```text
-使用 $paper-auditor 的 deep 模式审核 path/to/main.tex。
-保持原稿不变，并把结果写入新的 review 目录。
+使用 $paper-auditor 的 deep 模式审核
+"<论文或论文文件夹的绝对路径>"。
+
+目标期刊是 Engineering Structures。
+保持原稿不变，把结果写入新的 review 目录。
+重点检查时态、缩写、关键数值、引用支持关系、图表和全文逻辑。
 ```
 
-## 命令行快速使用
+把路径换成你的 `.docx`、`.tex`、`.pdf` 或论文文件夹即可。有 `.bib`、编译后的 PDF、图表数据、附录，或合法取得的被引文献全文时，也可以一并告诉它。材料越完整，能够核验的内容越多。
 
-完整审核先建立统一证据主干：
+接下来它会先清点材料并通读论文，再把重要问题排在前面，最后生成报告。是否修改稿件由你决定；只有你明确要求时，它才会在副本上改。
 
-```powershell
-python "<skill-root>\scripts\evidence_spine.py" prepare "<manuscript>" `
-  --mode deep --output-dir "<new-review-root>\spine" `
-  --artifact "bibliography=<references.bib>"
-```
+## 它读稿时会追问什么
 
-各 pass 完成后使用 `record-pass` 登记覆盖状态，最后运行 `finalize`。完整字段、证据能力和语义 Major/Blocker 复核格式见 `references/evidence-spine.md`。
-标准全文不能作为裸 `standard_source` 登记；必须通过 `--standards-source-map`，先验证本地处理模式、权利声明，以及 ASCE/ACI 等条目所需的出版方许可记录。未核验的主张、被阻断的标准任务和量值候选会保留在 `manual_checks`，不会被静默当成“无问题”。
+### 先把语言理顺
+
+这句话是在描述已经完成的试验，还是仍然成立的结论？Paper Auditor 按个人规则处理时态：已经开展的研究工作用过去时，通用结论与所提模型或体系的性能用现在时，已经完成的开发、标定和试验动作仍用过去时。
+
+它还会检查语法、英式或美式拼写、术语、符号、单位、构件名称和连字符。摘要与正文各有一套缩写作用域：各自首次定义，之后统一使用缩写。重复定义、大小写漂移，或者定义后又写回全称，都会被指出来。
+
+### 盯住会互相打架的数字
+
+它会追踪公式中的符号是否先定义、上下标含义是否变化、量纲和单位换算是否成立，也会重算明确给出的百分比。摘要、正文、表格和结论里的关键数值会放在一起核对。
+
+图件足够清晰时，它还会比较图中峰值和正文陈述。看不清的数值只会进入待确认项，不会被包装成确定错误。
+
+### 对引用多问一句
+
+第一步是检查正文引用与参考文献表能否对应。在你允许在线查询且查询服务可用时，它还会核对题名、作者、期刊、年份、DOI、撤稿或更正状态。
+
+第二步更重要：文献存在，不代表它支持当前这句话。拿到合法的被引原文后，Paper Auditor 会沿着“论文主张 → 引用位置 → 被引原文”逐条核对，并给出支持、部分支持、不支持或无法核验。引用簇会逐篇判断，不会把几篇文献混成一个结论。
+
+### 回头核对图表、公式和工程标准
+
+图、表、公式的编号、首次引用、LaTeX 标签、交叉引用和文献键会一起检查。它也会看图表呈现的方向、幅值和比较关系是否真的支持正文。
+
+结构工程稿件中出现 ASCE、ACI、AISC、Eurocode、GB 或 JGJ 时，它会先核对完整代号和版本。有准确版本原文且处理权限允许时，才继续复核条款、公式和适用范围。新版标准不会被自动当成研究采用的控制版本。
+
+### 最后退后一步看整篇
+
+研究目标、方法、结果、局限和结论是否接得上？创新点有没有换范围？结论是否跑得比证据更远？同一个试件、边界条件、破坏模式或核心观点在不同章节有没有悄悄变化？
+
+这一步需要通读全文。没有可复现位置的担忧不会被硬写成正式错误，而会放进“给作者的问题”中。
+
+## 三种审核节奏
+
+| 模式 | 什么时候用 |
+| --- | --- |
+| `fast` | 发给导师或合作者前，先扫一遍明确的语言、缩写、术语，以及正文引用与参考文献对应问题 |
+| `deep` | 投稿前完整审核，加入逻辑、图表、文献支持性、数值和标准复核 |
+| `targeted` | 只查一个方向，例如“只查缩写”或“只核对参考文献” |
+
+拿不准时用 `deep`。如果只想检查某一类问题，请明确写 `targeted`，它不会自行扩大范围。
+
+## 审完以后你会拿到什么
+
+最常用的是两份文件：
+
+- `review-report.md`：给人看的审核报告。Blocker 和 Major 问题排在前面，每条尽量带原文位置、短引文、依据和可执行的修改建议。
+- `findings.json`：给后续追踪、筛选或自动化处理用的结构化结果。
+
+深度审核还会保留文献、主张支持性、公式与数值、工程标准和审核覆盖情况的单独记录。普通使用时不必逐个打开它们，主报告已经汇总了需要你处理的内容。
+
+如果输入后来发生变化，旧结果会标为 `stale`。某个必要环节没有运行或证据受限时，审核状态会标为 `incomplete`；尚待解决的重点主张、标准或数值候选会另外把投稿准备状态标为 `manual_confirmation_required`。“没有查到问题”和“没有完成核验”不会混在一起。
+
+## 把它调成你的写作习惯
+
+这套 Skill 本来就是为个人使用准备的。你可以逐步教它：
+
+- 你习惯的英式或美式英语、默认审核模式和隐私偏好，写在 [`references/personal-profile.json`](references/personal-profile.json)；
+- 你所在方向的首选术语、禁用词、缩写和别名，写在 [`references/terminology.tsv`](references/terminology.tsv)；
+- 常用符号、量纲和首次定义要求，写在 [`references/quantity-profile.tsv`](references/quantity-profile.tsv)；
+- 期刊风格与领域推理规则，分别放在 [`references/journal-benchmarks.md`](references/journal-benchmarks.md) 和 [`references/domain-style.md`](references/domain-style.md)。
+
+先用真实稿件跑一轮，再记录哪些建议被接受、哪些是稿件特例。只有反复出现且确认有效的习惯，才值得写回个人规则。具体方法见 [`references/personalization-guide.md`](references/personalization-guide.md)。
+
+## 它也会克制地说“不知道”
+
+- 默认在线核验只发送 DOI，或最少量的题名、作者和年份元数据。未经允许，不会把未发表全文或图件发送给外部服务。
+- `not_found` 只表示没有找到足够可靠的匹配，不能据此认定文献伪造。
+- 没有被引原文或同等直接证据时，引用支持性只能写“无法核验”。
+- 标准全文即使在本地存在，也要先通过带权利声明的来源映射，才会进入条款级处理。ASCE、ACI 等标记为需要许可的条目，还要提供出版方许可记录。
+- 编辑源文件更适合文字和交叉引用检查。PDF 会受到文本提取质量、版面和图件清晰度影响。
+- 它帮助作者提高审核覆盖率和可复核性，最终判断仍由作者、领域专家和期刊编辑完成。
+
+<details>
+<summary>进阶：命令行、完整产物与测试</summary>
+
+多数用户只需要在 Codex 中调用 `$paper-auditor`。如果你想自己控制流程，请先阅读 [`SKILL.md`](SKILL.md)。
+
 确定性论文检查：
 
 ```powershell
@@ -101,75 +151,23 @@ python "<skill-root>\scripts\quantitative_checks.py" "<manuscript.tex>" `
   --output "<new-review-dir>\quantitative.json"
 ```
 
-引文支持性证据准备与定稿：
-
-```powershell
-python "<skill-root>\scripts\claim_support.py" prepare "<manuscript>" `
-  --references-json "<citation-review-dir>\references.json" `
-  --sources-dir "<lawful-local-paper-sources>" `
-  --output-dir "<new-claim-evidence-dir>" --scope priority
-
-python "<skill-root>\scripts\claim_support.py" finalize `
-  "<claim-evidence-dir>\claim-evidence.json" "<claim-decisions.json>" `
-  --output-dir "<new-claim-result-dir>"
-```
-
-工程标准台账（默认仅核验元数据）：
+工程标准台账：
 
 ```powershell
 python "<skill-root>\scripts\verify_standards.py" "<manuscript>" `
   --output-dir "<new-standard-review-dir>"
 ```
 
-标准全文只在显式 `--source-map` 通过权利声明后本地处理；ASCE 与 ACI 还要求记录出版方许可依据。
+完整 `deep` 审核使用统一的证据主干，记录输入哈希、证据锚点、各审核环节的覆盖状态和最终裁决。操作契约见 [`references/evidence-spine.md`](references/evidence-spine.md)，引用支持性流程见 [`references/claim-support.md`](references/claim-support.md)，工程标准权限与核验流程见 [`references/standards-verification.md`](references/standards-verification.md)。
 
-隐私控制选项：
+除主报告外，流程可生成 `citation-report.md`、`references.json`、`claim-evidence.json`、`claim-support.json`、`quantitative.json`、`standards.json`、`artifact-manifest.json`、`evidence-ledger.json` 和覆盖记录。`--force` 只能覆盖已有报告，不能覆盖输入原稿或已读取的 BibTeX 文件。
 
-```text
---offline          只提取，不发起网络请求
---no-title-search  只按 DOI 查询，不发送题名、作者和年份
-```
-
-## 输出
-
-- `review-report.md`：便于阅读的审核报告；
-- `findings.json`：含稳定 ID、严重度、置信度、状态、位置、证据和修改建议的结构化结果；
-- `citation-report.md` 与 `references.json`：单独目录中的书目核验结果。
-- `claim-evidence.json` 与 `claim-support.json`：逐条主张—来源证据链及最终支持性结论；
-- `quantitative.json`：符号、单位、量纲、计算、重复数值和人工复核候选；
-- `standards.json` 与 `standards-report.md`：标准版本台账、条款任务与适用性复核入口。
-- `artifact-manifest.json`、`evidence-ledger.json`、`coverage.json` 与 `final-evidence-ledger.json`：输入哈希、稳定稿件/外部原文证据 ID、pass 执行状态和陈旧性依据。
-
-默认不修改原稿，报告写入独立目录。`--force` 只允许覆盖既有报告，不允许覆盖输入原稿或已读取的 BibTeX 源文件。
-
-## 个性化
-
-| 文件 | 用途 |
-| --- | --- |
-| `references/personal-profile.json` | 默认模式、英语变体、严重度和隐私偏好 |
-| `references/terminology.tsv` | 首选术语、禁用词、缩写和别名 |
-| `references/domain-style.md` | 结构与地震工程的术语和推理规则 |
-| `references/claim-support.md` | 引文支持性判定流程与决策格式 |
-| `references/quantity-profile.tsv` | 个人符号含义、量纲与必须定义规则 |
-| `references/standards-registry.json` | 标准版本元数据与全文处理策略 |
-| `references/standards-verification.md` | 标准条款、公式、适用性和授权门控流程 |
-| `references/journal-benchmarks.md` | EESD、Engineering Structures 与 ASCE 期刊风格基准 |
-| `references/personalization-guide.md` | 安全修改个人规则的方法 |
-| `references/evidence-spine.md` | 统一 manifest、证据台账、覆盖记录和最终裁决流程 |
-
-## 隐私与边界
-
-- 未经允许，不把未发表全文或图件发送给外部服务；
-- 默认在线核验只发送 DOI，或最少量的题名、作者、年份元数据；
-- `not_found` 只表示没有找到足够可靠的匹配，不能据此认定文献伪造；
-- 判断“引文是否支持附近观点”仍需要阅读原文或同等直接证据；
-- 仅在本地发现标准 PDF 不代表获得自动处理授权；标准条款核验遵循显式权利声明和出版方许可门槛；
-- 本工具用于提高审核覆盖率和可复核性，不能替代作者、领域专家或期刊编辑的最终判断。
-
-## 测试
+运行回归测试：
 
 ```powershell
 python -m unittest discover -s scripts -p "test_*.py" -v
 ```
 
-当前版本包含 131 项回归测试，其中 31 项负向用例专门覆盖伪造覆盖状态、错绑来源、虚假定位、输出别名和权利门禁等对抗边界。核心脚本只依赖 Python 标准库；PDF 提取工具 `pdftotext` 为可选依赖。
+当前版本包含 131 项回归测试，其中 31 项负向用例专门检查伪造覆盖状态、错绑来源、虚假定位、输出别名和标准权限门槛等边界。核心脚本只依赖 Python 标准库；PDF 文本提取可选用 `pdftotext`。
+
+</details>
