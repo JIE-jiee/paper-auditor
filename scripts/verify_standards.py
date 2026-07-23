@@ -269,6 +269,81 @@ def _source_gate_status(source: StandardSource, policy: str) -> str:
     return "allowed"
 
 
+def authorize_standard_source_map(
+    source_map_path: Path,
+    registry_path: Path,
+) -> list[dict[str, Any]]:
+    """Validate source-map rights without opening any standard full text.
+
+    The returned records are suitable for a manifest.  They deliberately retain
+    only whether a permission reference was provided plus its digest, never the
+    permission text itself.
+    """
+
+    source_map_path = source_map_path.resolve(strict=True)
+    registry_path = registry_path.resolve(strict=True)
+    data = json.loads(source_map_path.read_text(encoding="utf-8-sig"))
+    rows = data.get("sources", []) if isinstance(data, dict) else []
+    if not isinstance(rows, list) or not rows:
+        raise ValueError("标准 source-map 的 sources 必须是非空数组。")
+    registry = load_registry(registry_path)
+    registry_families = _registry_by_family(registry)
+    records: list[dict[str, Any]] = []
+    seen_designations: set[str] = set()
+    seen_paths: set[Path] = set()
+    for row in rows:
+        if not isinstance(row, dict) or not row.get("designation") or not row.get("path"):
+            raise ValueError("source-map 每项必须包含 designation 与 path。")
+        designation = _space(str(row["designation"]))
+        designation_key = _source_key(designation)
+        if designation_key in seen_designations:
+            raise ValueError(f"source-map 含重复标准代号：{designation}")
+        seen_designations.add(designation_key)
+        candidate = (source_map_path.parent / str(row["path"])).resolve(strict=True)
+        if candidate.suffix.casefold() not in SUPPORTED_STANDARD_SUFFIXES:
+            raise ValueError(f"不支持的标准文本格式：{candidate}")
+        if candidate in seen_paths:
+            raise ValueError(f"同一标准文件不能映射到多个代号：{candidate.name}")
+        seen_paths.add(candidate)
+        source = StandardSource(
+            path=candidate,
+            rights_attested=row.get("rights_attested") is True,
+            permission_reference=_space(str(row.get("permission_reference", ""))),
+            processing_mode=_space(str(row.get("processing_mode", "local-deterministic"))),
+            origin="source-map",
+        )
+        canonical, family, _ = normalize_designation(designation)
+        policy = _fulltext_processing_policy(registry_families.get(family))
+        gate_status = _source_gate_status(source, policy)
+        permission_digest = (
+            hashlib.sha256(source.permission_reference.encode("utf-8")).hexdigest()
+            if source.permission_reference
+            else ""
+        )
+        entry_projection = {
+            "designation": designation,
+            "path": str(row["path"]),
+            "processing_mode": source.processing_mode,
+            "rights_attested": source.rights_attested,
+            "permission_reference_sha256": permission_digest,
+        }
+        records.append(
+            {
+                **entry_projection,
+                "canonical_designation": canonical,
+                "family": family,
+                "resolved_path": str(candidate),
+                "fulltext_processing_policy": policy,
+                "permission_reference_provided": bool(source.permission_reference),
+                "gate_status": gate_status,
+                "source_map_entry_sha256": hashlib.sha256(
+                    json.dumps(entry_projection, ensure_ascii=False, sort_keys=True).encode("utf-8")
+                ).hexdigest(),
+            }
+        )
+    return records
+
+
 def read_standard_source(path: Path) -> str:
     suffix = path.suffix.casefold()
     if suffix == ".pdf":
@@ -311,6 +386,7 @@ def _finding(
     reason: str,
     suggestion: str,
     *,
+    quote: str,
     related_locations: Sequence[Mapping[str, Any]] = (),
 ) -> dict[str, Any]:
     identifier = _stable_id("STD", check_id, str(location.get("source", "")), str(location.get("line", "")), observation)
@@ -322,7 +398,8 @@ def _finding(
         "confidence": round(confidence, 2),
         "status": "needs-review",
         "location": dict(location),
-        "quote": "",
+        "quote": _short(quote, 220),
+        "evidence_mode": "deterministic",
         "observation": observation,
         "expected": expected,
         "reason": reason,
@@ -373,6 +450,7 @@ def build_ledger(
                     "标准引用应给出完整代号、版本或年份，并说明适用的国家附录/修订（如适用）。",
                     "缺少版本会使条款、公式和适用范围无法复核。",
                     "补充研究实际采用的完整标准代号；不要仅按最新版本自动替换。",
+                    quote=mention.raw,
                 )
             )
         elif registry_item:
@@ -390,6 +468,7 @@ def build_ledger(
                         "确认研究采用的版本与项目日期、管辖区、所依据建筑规范或比较目的相符。",
                         "较旧版本可能仍是合法的控制版本，不能仅凭出版时间判错。",
                         "在方法或标准说明中写明采用该版本的依据；必要时核对勘误、补遗和解释。",
+                        quote=mention.raw,
                     )
                 )
 
@@ -505,6 +584,7 @@ def build_ledger(
                 "除非论文明确进行版本比较，否则同一计算或试验依据应使用并说明一致的控制版本。",
                 "跨版本的条款号、系数、公式和适用范围可能不同。",
                 "确认这是历史比较还是无意混用；分别标明每一处版本及其用途。",
+                quote=first.raw,
                 related_locations=[item.location() for item in family_mentions[1:]],
             )
         )
