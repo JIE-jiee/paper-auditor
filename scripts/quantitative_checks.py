@@ -1408,6 +1408,7 @@ def analyze_quantitative_text(
     return {
         "schema_version": SCHEMA_VERSION,
         "source": source,
+        "pass_id": "quantitative",
         "format": format_name,
         "summary": {
             "finding_count": len(ordered_findings),
@@ -1491,6 +1492,7 @@ def main(argv: list[str] | None = None) -> int:
     serialized = json.dumps(result, ensure_ascii=False, indent=2) + "\n"
     if args.output:
         output = Path(args.output)
+        output.parent.mkdir(parents=True, exist_ok=True)
         if output.exists():
             print(f"quantitative-checks: 输出已存在，未覆盖：{output}", file=sys.stderr)
             return 2

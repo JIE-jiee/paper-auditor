@@ -598,10 +598,12 @@ def build_ledger(
     return {
         "schema_version": SCHEMA_VERSION,
         "generated_at": utc_now(),
+        "pass_id": "engineering_standards",
         "input": {"path": str(manuscript), "sha256": hashlib.sha256(manuscript.read_bytes()).hexdigest()},
         "registry": {"path": str(registry_path), "checked_at": registry.get("checked_at", ""), "sha256": hashlib.sha256(registry_path.read_bytes()).hexdigest()},
         "sources": source_manifest,
         "summary": {
+            "review_completed": True,
             "mention_count": len(output_mentions),
             "families": dict(sorted(Counter(item["family"] for item in output_mentions).items())),
             "finding_count": len(findings),

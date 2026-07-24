@@ -280,6 +280,7 @@ class StandardsFindingContracts(EvidenceSpineContractTestCase):
             prepared,
             "engineering_standards",
             findings=[finding],
+            review_tasks=[],
             summary={"finding_count": 1, "clause_review_task_count": 0},
         )
         result_path = self.write_json("authorized-standard-result.json", payload)
@@ -483,7 +484,9 @@ class UnresolvedEvidenceProjectionContracts(EvidenceSpineContractTestCase):
             "claim_support",
             stage="finalized",
             claims=[claim],
+            formal_findings=[],
             summary={
+                "review_completed": True,
                 "claim_count": 1,
                 "reference_assessment_count": 1,
                 "by_reference_verdict": {"unable_to_verify": 1},
@@ -527,9 +530,11 @@ class UnresolvedEvidenceProjectionContracts(EvidenceSpineContractTestCase):
         payload = self.result_envelope(
             prepared,
             "engineering_standards",
+            mentions=[],
             review_tasks=[task],
             summary={
-                "mention_count": 1,
+                "review_completed": True,
+                "mention_count": 0,
                 "finding_count": 0,
                 "clause_review_task_count": 1,
             },

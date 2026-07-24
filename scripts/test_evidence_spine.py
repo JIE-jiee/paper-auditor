@@ -6,6 +6,7 @@ from pathlib import Path
 
 from evidence_spine import (
     EvidenceSpineError,
+    coverage_fingerprint,
     adjudicate_report,
     prepare_evidence_spine,
     record_pass,
@@ -70,10 +71,35 @@ The proposed model predicts the peak response accurately.
         value.update(changes)
         return value
 
-    def write_result(self, name, findings, *, ledger_fingerprint=None):
+    def write_result(
+        self,
+        name,
+        findings,
+        *,
+        pass_id=None,
+        ledger_fingerprint=None,
+        input_fingerprint=None,
+        reviewer="",
+    ):
         payload = {"schema_version": "test", "findings": findings}
+        if pass_id:
+            payload["pass_id"] = pass_id
         if ledger_fingerprint:
-            payload["provenance"] = {"ledger_fingerprint": ledger_fingerprint}
+            payload["provenance"] = {
+                "ledger_fingerprint": ledger_fingerprint,
+                "input_fingerprint": input_fingerprint,
+            }
+        if pass_id == "claim_logic":
+            payload["semantic_audit_status"] = "completed"
+            payload["semantic_review"] = {
+                "scope": "The targeted logic issue and its anchored manuscript context.",
+                "reviewed_by": reviewer,
+                "input_fingerprint": input_fingerprint,
+                "ledger_fingerprint": ledger_fingerprint,
+                "node_reviews": [],
+                "edge_reviews": [],
+                "contract_gap_reviews": [],
+            }
         path = self.root / name
         path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
         return path
@@ -91,7 +117,10 @@ The proposed model predicts the peak response accurately.
         result_path = self.write_result(
             f"{pass_id}-result.json",
             findings,
+            pass_id=pass_id,
             ledger_fingerprint=prepared["ledger"]["ledger_fingerprint"],
+            input_fingerprint=prepared["ledger"]["input_fingerprint"],
+            reviewer=reviewer,
         )
         coverage_path = self.root / name
         record_pass(
@@ -347,6 +376,333 @@ The proposed model predicts the peak response accurately.
                 mode="targeted",
                 required_passes=["deterministic_text"],
             )
+    def test_completed_result_is_revalidated_during_reconstruction(self):
+        prepared = self.prepare(
+            name="revalidate-completed-spine",
+            pass_id="language_tense",
+        )
+        valid_payload = {
+            "schema_version": "test",
+            "pass_id": "language_tense",
+            "provenance": {
+                "ledger_fingerprint": prepared["ledger"]["ledger_fingerprint"],
+                "input_fingerprint": prepared["ledger"]["input_fingerprint"],
+            },
+            "summary": {"review_completed": True},
+            "findings": [],
+        }
+        valid_path = self.root / "language-valid.json"
+        valid_path.write_text(json.dumps(valid_payload), encoding="utf-8")
+        coverage_path = self.root / "language-valid-coverage.json"
+        record_pass(
+            prepared["paths"]["coverage"],
+            prepared["paths"]["ledger"],
+            coverage_path,
+            pass_id="language_tense",
+            status="completed",
+            result_path=valid_path,
+            reviewer="language-reviewer",
+        )
+        baseline = self.finalize(
+            prepared,
+            coverage_path,
+            name="language-valid-final",
+        )
+        self.assertEqual("ready_given_evidence", baseline["submission_readiness"])
+
+        forged_path = self.root / "language-forged.json"
+        forged_path.write_text("{}", encoding="utf-8")
+        coverage = json.loads(coverage_path.read_text(encoding="utf-8"))
+        record = next(
+            item for item in coverage["passes"]
+            if item["pass_id"] == "language_tense"
+        )
+        record["result"]["path"] = str(forged_path)
+        record["result"]["sha256"] = hashlib.sha256(
+            forged_path.read_bytes()
+        ).hexdigest()
+        coverage["coverage_fingerprint"] = coverage_fingerprint(coverage)
+        forged_coverage = self.root / "language-forged-coverage.json"
+        forged_coverage.write_text(json.dumps(coverage), encoding="utf-8")
+
+        result = self.finalize(
+            prepared,
+            forged_coverage,
+            name="language-forged-final",
+        )
+        self.assertEqual("incomplete", result["review_status"])
+        self.assertEqual(
+            "manual_confirmation_required",
+            result["submission_readiness"],
+        )
+        self.assertTrue(
+            any(
+                item.startswith("invalid_pass_result_contract:language_tense:")
+                for item in result["diagnostics"]
+            )
+        )
+
+    def test_not_applicable_result_and_inventory_are_revalidated(self):
+        prepared = self.prepare(
+            name="revalidate-na-spine",
+            pass_id="visual",
+        )
+        valid_payload = {
+            "schema_version": "test",
+            "pass_id": "visual",
+            "provenance": {
+                "ledger_fingerprint": prepared["ledger"]["ledger_fingerprint"],
+                "input_fingerprint": prepared["ledger"]["input_fingerprint"],
+            },
+            "inventory": {
+                "scope": "All figure and table callouts in the current manuscript.",
+                "item_count": 0,
+                "items": [],
+            },
+        }
+        valid_path = self.root / "visual-na-valid.json"
+        valid_path.write_text(json.dumps(valid_payload), encoding="utf-8")
+        coverage_path = self.root / "visual-na-valid-coverage.json"
+        record_pass(
+            prepared["paths"]["coverage"],
+            prepared["paths"]["ledger"],
+            coverage_path,
+            pass_id="visual",
+            status="not_applicable",
+            result_path=valid_path,
+            rationale="A current visual inventory found no figures or tables.",
+            reviewer="visual-reviewer",
+        )
+        baseline = self.finalize(
+            prepared,
+            coverage_path,
+            name="visual-na-valid-final",
+        )
+        self.assertEqual("ready_given_evidence", baseline["submission_readiness"])
+
+        forged_payloads = {
+            "malformed": {},
+            "inventory-drift": {
+                **valid_payload,
+                "inventory": {
+                    "scope": "A different claimed inventory scope.",
+                    "item_count": 0,
+                    "items": [],
+                },
+            },
+        }
+        for label, payload in forged_payloads.items():
+            with self.subTest(label=label):
+                forged_path = self.root / f"visual-na-{label}.json"
+                forged_path.write_text(json.dumps(payload), encoding="utf-8")
+                coverage = json.loads(coverage_path.read_text(encoding="utf-8"))
+                record = next(
+                    item for item in coverage["passes"]
+                    if item["pass_id"] == "visual"
+                )
+                record["result"]["path"] = str(forged_path)
+                record["result"]["sha256"] = hashlib.sha256(
+                    forged_path.read_bytes()
+                ).hexdigest()
+                coverage["coverage_fingerprint"] = coverage_fingerprint(coverage)
+                forged_coverage = self.root / f"visual-na-{label}-coverage.json"
+                forged_coverage.write_text(json.dumps(coverage), encoding="utf-8")
+                result = self.finalize(
+                    prepared,
+                    forged_coverage,
+                    name=f"visual-na-{label}-final",
+                )
+                self.assertEqual("incomplete", result["review_status"])
+                self.assertNotEqual(
+                    "ready_given_evidence",
+                    result["submission_readiness"],
+                )
+
+
+    def strict_payload(self, prepared, pass_id="language_tense"):
+        return {
+            "schema_version": "strict-contract-test",
+            "pass_id": pass_id,
+            "provenance": {
+                "ledger_fingerprint": prepared["ledger"]["ledger_fingerprint"],
+                "input_fingerprint": prepared["ledger"]["input_fingerprint"],
+            },
+            "summary": {"review_completed": True},
+            "findings": [],
+        }
+
+    def assert_strict_payload_rejected(
+        self,
+        prepared,
+        payload,
+        *,
+        pass_id="language_tense",
+        label,
+    ):
+        result_path = self.root / f"{label}-result.json"
+        result_path.write_text(
+            json.dumps(payload, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        with self.assertRaises(EvidenceSpineError):
+            record_pass(
+                prepared["paths"]["coverage"],
+                prepared["paths"]["ledger"],
+                self.root / f"{label}-coverage.json",
+                pass_id=pass_id,
+                status="completed",
+                result_path=result_path,
+                reviewer=f"{pass_id}-reviewer",
+            )
+
+    def test_completed_result_requires_exact_pass_id(self):
+        prepared = self.prepare(
+            name="strict-missing-pass-id-spine",
+            pass_id="language_tense",
+        )
+        payload = self.strict_payload(prepared)
+        payload.pop("pass_id")
+        self.assert_strict_payload_rejected(
+            prepared,
+            payload,
+            label="strict-missing-pass-id",
+        )
+
+    def test_completed_result_requires_native_string_schema_version(self):
+        prepared = self.prepare(
+            name="strict-schema-type-spine",
+            pass_id="language_tense",
+        )
+        payload = self.strict_payload(prepared)
+        payload["schema_version"] = {"fake": 1}
+        self.assert_strict_payload_rejected(
+            prepared,
+            payload,
+            label="strict-schema-type",
+        )
+
+    def test_completed_result_requires_findings_array(self):
+        prepared = self.prepare(
+            name="strict-findings-type-spine",
+            pass_id="language_tense",
+        )
+        payload = self.strict_payload(prepared)
+        payload["findings"] = {}
+        self.assert_strict_payload_rejected(
+            prepared,
+            payload,
+            label="strict-findings-type",
+        )
+
+    def test_completed_result_rejects_false_completion_marker(self):
+        prepared = self.prepare(
+            name="strict-false-completion-spine",
+            pass_id="language_tense",
+        )
+        payload = self.strict_payload(prepared)
+        payload["summary"] = {"review_completed": False}
+        self.assert_strict_payload_rejected(
+            prepared,
+            payload,
+            label="strict-false-completion",
+        )
+
+    def test_completed_result_rejects_mismatched_finding_count(self):
+        prepared = self.prepare(
+            name="strict-count-spine",
+            pass_id="language_tense",
+        )
+        payload = self.strict_payload(prepared)
+        payload["summary"]["finding_count"] = 99
+        self.assert_strict_payload_rejected(
+            prepared,
+            payload,
+            label="strict-count",
+        )
+
+    def test_completed_result_rejects_empty_inventory_as_execution(self):
+        prepared = self.prepare(
+            name="strict-empty-inventory-spine",
+            pass_id="deterministic_text",
+        )
+        payload = self.strict_payload(prepared, "deterministic_text")
+        payload.pop("summary")
+        payload.pop("findings")
+        payload["inventory"] = {}
+        self.assert_strict_payload_rejected(
+            prepared,
+            payload,
+            pass_id="deterministic_text",
+            label="strict-empty-inventory",
+        )
+
+    def test_declared_wrong_source_cannot_fall_back_to_matching_digest(self):
+        prepared = self.prepare(
+            name="strict-wrong-source-spine",
+            pass_id="language_tense",
+        )
+        payload = self.strict_payload(prepared)
+        payload["sources"] = [
+            {
+                "source": "not-the-manuscript.md",
+                "sha256": self.source_hash(),
+            }
+        ]
+        self.assert_strict_payload_rejected(
+            prepared,
+            payload,
+            label="strict-wrong-source",
+        )
+
+    def test_finalize_revalidates_resigned_result_without_pass_id(self):
+        prepared = self.prepare(
+            name="strict-finalize-spine",
+            pass_id="language_tense",
+        )
+        payload = self.strict_payload(prepared)
+        result_path = self.root / "strict-finalize-result.json"
+        result_path.write_text(json.dumps(payload), encoding="utf-8")
+        coverage_path = self.root / "strict-finalize-coverage.json"
+        record_pass(
+            prepared["paths"]["coverage"],
+            prepared["paths"]["ledger"],
+            coverage_path,
+            pass_id="language_tense",
+            status="completed",
+            result_path=result_path,
+            reviewer="language-reviewer",
+        )
+
+        payload.pop("pass_id")
+        result_path.write_text(json.dumps(payload), encoding="utf-8")
+        coverage = json.loads(coverage_path.read_text(encoding="utf-8"))
+        record = next(
+            item
+            for item in coverage["passes"]
+            if item["pass_id"] == "language_tense"
+        )
+        record["result"]["sha256"] = hashlib.sha256(
+            result_path.read_bytes()
+        ).hexdigest()
+        coverage["coverage_fingerprint"] = coverage_fingerprint(coverage)
+        resigned_coverage = self.root / "strict-finalize-resigned-coverage.json"
+        resigned_coverage.write_text(json.dumps(coverage), encoding="utf-8")
+
+        final = self.finalize(
+            prepared,
+            resigned_coverage,
+            name="strict-finalize-resigned",
+        )
+        self.assertEqual("incomplete", final["review_status"])
+        self.assertTrue(
+            any(
+                item.startswith(
+                    "invalid_pass_result_contract:language_tense:"
+                )
+                for item in final["diagnostics"]
+            )
+        )
+
 
 
 if __name__ == "__main__":

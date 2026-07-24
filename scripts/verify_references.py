@@ -1201,6 +1201,7 @@ def verify_file(
     return {
         "schema_version": SCHEMA_VERSION,
         "generated_at": utc_now(),
+        "pass_id": "citation_integrity",
         "input": {
             "path": str(input_path),
             "sha256": sha256_bytes(input_path.read_bytes()),

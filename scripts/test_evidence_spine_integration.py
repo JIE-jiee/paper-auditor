@@ -154,6 +154,7 @@ A self-centering (SC) frame was analyzed. The self-centering frame remained stab
             "citation-inventory.json",
             {
                 "schema_version": "test",
+                "pass_id": "claim_support",
                 "provenance": {
                     "ledger_fingerprint": prepared["ledger"]["ledger_fingerprint"]
                 },
@@ -261,6 +262,7 @@ A self-centering (SC) frame was analyzed. The self-centering frame remained stab
             "claim-support.json",
             {
                 "schema_version": "test",
+                "pass_id": "claim_support",
                 "provenance": {
                     "ledger_fingerprint": prepared["ledger"]["ledger_fingerprint"]
                 },

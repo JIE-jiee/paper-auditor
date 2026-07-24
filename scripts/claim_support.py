@@ -1478,6 +1478,7 @@ def finalize_claim_support(
     data = {
         "schema_version": FINAL_SCHEMA_VERSION,
         "stage": "finalized",
+        "pass_id": "claim_support",
         "generated_at": utc_now(),
         "input": evidence.get("input", {}),
         "evidence_packet": {
@@ -1489,6 +1490,7 @@ def finalize_claim_support(
             "sha256": sha256_file(decisions_file),
         },
         "summary": {
+            "review_completed": True,
             "claim_count": len(finalized_claims),
             "reference_assessment_count": sum(pair_counts.values()),
             "by_reference_verdict": {verdict: pair_counts.get(verdict, 0) for verdict in sorted(VERDICTS)},
