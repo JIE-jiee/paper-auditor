@@ -81,10 +81,17 @@ class EvidenceSpineSecurityTests(unittest.TestCase):
         return value
 
     def result_file(self, prepared, name, findings):
+        required_passes = [
+            item["pass_id"]
+            for item in prepared["coverage"]["passes"]
+            if item.get("required")
+        ]
+        self.assertEqual(1, len(required_passes))
         return self.write_json(
             name,
             {
                 "schema_version": "security-test",
+                "pass_id": required_passes[0],
                 "provenance": {
                     "ledger_fingerprint": prepared["ledger"]["ledger_fingerprint"]
                 },

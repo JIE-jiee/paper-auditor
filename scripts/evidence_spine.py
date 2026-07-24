@@ -19,12 +19,20 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
-from audit_manuscript import AuditError, SourceUnit, _load_sources
+from audit_manuscript import (
+    CALLOUT_RE,
+    AuditError,
+    SourceUnit,
+    _crossref_kind,
+    _is_explicitly_planned_target,
+    _load_sources,
+)
+from manuscript_map import ManuscriptMapError, validate_manuscript_map
 from verify_standards import authorize_standard_source_map
 
 
 SCHEMA_VERSION = "0.1.0"
-VALID_MODES = {"fast", "deep", "targeted"}
+VALID_MODES = {"draft", "fast", "deep", "targeted"}
 VALID_PASS_STATUSES = {
     "completed",
     "not_applicable",
@@ -33,6 +41,23 @@ VALID_PASS_STATUSES = {
     "not_run",
 }
 CAPABILITY_STATUSES = {"available", "partial", "missing"}
+VALID_DRAFT_PLANNED_CHECKS = {
+    "crossref-callout-planned-target",
+    "latex-reference-planned-label",
+}
+SEMANTIC_REVIEW_ASSESSMENTS = {
+    "satisfied",
+    "unresolved",
+    "contradicted",
+    "not_yet_written",
+    "not_applicable",
+}
+UNRESOLVED_SEMANTIC_ASSESSMENTS = (
+    SEMANTIC_REVIEW_ASSESSMENTS - {"satisfied"}
+)
+LATEX_REFERENCE_RE = re.compile(
+    r"\\(?:ref|eqref|autoref|pageref|nameref|cref|Cref)\*?\s*\{([^{}]+)\}"
+)
 SEVERITY_ORDER = {"Blocker": 0, "Major": 1, "Minor": 2, "Info": 3}
 VALID_FINDING_STATUSES = {
     "confirmed",
@@ -47,56 +72,65 @@ PASS_SPECS: tuple[dict[str, Any], ...] = (
     {
         "id": "deterministic_text",
         "label": "缩写、术语、格式与交叉引用确定性检查",
-        "required_modes": ("fast", "deep"),
+        "required_modes": ("draft", "fast", "deep"),
         "semantic": False,
+        "allow_not_applicable": False,
     },
     {
         "id": "language_tense",
         "label": "语言与时态语义审查",
-        "required_modes": ("fast", "deep"),
+        "required_modes": ("draft", "fast", "deep"),
         "semantic": True,
+        "allow_not_applicable": False,
     },
     {
         "id": "abbreviation_terminology",
         "label": "缩写、术语与符号语义一致性审查",
-        "required_modes": ("deep",),
+        "required_modes": ("draft", "deep"),
         "semantic": True,
+        "allow_not_applicable": False,
     },
     {
         "id": "quantitative",
         "label": "公式、单位、符号与数值一致性审查",
-        "required_modes": ("deep",),
+        "required_modes": ("draft", "deep"),
         "semantic": False,
+        "allow_not_applicable": True,
     },
     {
         "id": "claim_logic",
         "label": "全文逻辑、研究范围与观点一致性审查",
-        "required_modes": ("deep",),
+        "required_modes": ("draft", "deep"),
         "semantic": True,
+        "allow_not_applicable": False,
     },
     {
         "id": "citation_integrity",
         "label": "引文—参考文献完整性与书目真实性核验",
         "required_modes": ("deep",),
         "semantic": False,
+        "allow_not_applicable": True,
     },
     {
         "id": "claim_support",
         "label": "论文主张—被引来源支持性核验",
         "required_modes": ("deep",),
         "semantic": True,
+        "allow_not_applicable": True,
     },
     {
         "id": "engineering_standards",
         "label": "工程标准版本、条款、公式与适用性核验",
         "required_modes": ("deep",),
         "semantic": True,
+        "allow_not_applicable": True,
     },
     {
         "id": "visual",
         "label": "图表、公式排版与渲染结果审查",
         "required_modes": ("deep",),
         "semantic": True,
+        "allow_not_applicable": True,
     },
 )
 PASS_SPEC_BY_ID = {item["id"]: item for item in PASS_SPECS}
@@ -872,6 +906,11 @@ def _validate_contract_pair(coverage: Mapping[str, Any], ledger: Mapping[str, An
             raise EvidenceSpineError(f"coverage pass 规格被修改：{pass_id}")
         if item.get("status") not in VALID_PASS_STATUSES:
             raise EvidenceSpineError(f"coverage pass 状态无效：{pass_id}")
+        if (
+            item.get("status") == "not_applicable"
+            and not spec["allow_not_applicable"]
+        ):
+            raise EvidenceSpineError(f"pass {pass_id} 始终适用，不能标记为 not_applicable")
         records[pass_id] = item
     missing = sorted(set(PASS_SPEC_BY_ID) - set(records))
     if missing:
@@ -900,16 +939,35 @@ def _result_dependency_candidates(ledger: Mapping[str, Any]) -> list[Mapping[str
 
 def _match_result_source(source: str, digest: str, dependencies: Sequence[Mapping[str, Any]]) -> bool:
     normalized = _source_key(source)
-    basename = Path(source).name.casefold() if source else ""
-    by_name = [
-        item
-        for item in dependencies
-        if not source
-        or _source_key(item.get("source")) == normalized
-        or Path(str(item.get("source", ""))).name.casefold() == basename
+    if source:
+        exact = [
+            item
+            for item in dependencies
+            if normalized
+            in {
+                _source_key(item.get("source")),
+                _source_key(item.get("path")),
+            }
+        ]
+        if exact:
+            return any(str(item.get("sha256", "")) == digest for item in exact)
+        basename = Path(source).name.casefold()
+        by_basename = [
+            item
+            for item in dependencies
+            if basename
+            in {
+                Path(str(item.get("source", ""))).name.casefold(),
+                Path(str(item.get("path", ""))).name.casefold(),
+            }
+        ]
+        return len(by_basename) == 1 and str(
+            by_basename[0].get("sha256", "")
+        ) == digest
+    digest_matches = [
+        item for item in dependencies if str(item.get("sha256", "")) == digest
     ]
-    candidates = by_name or list(dependencies)
-    return any(str(item.get("sha256", "")) == digest for item in candidates)
+    return len(digest_matches) == 1
 
 
 def _validate_result_sources(result: Mapping[str, Any], ledger: Mapping[str, Any]) -> tuple[list[str], bool]:
@@ -941,15 +999,115 @@ def _validate_result_sources(result: Mapping[str, Any], ledger: Mapping[str, Any
     return warnings, matched
 
 
+def _validate_result_envelope_shape(
+    result: Mapping[str, Any],
+    *,
+    pass_id: str,
+    status: str,
+) -> str:
+    schema_version = result.get("schema_version")
+    if not isinstance(schema_version, str) or not schema_version.strip():
+        raise EvidenceSpineError(
+            "completed/not_applicable result.schema_version 必须是原生非空字符串"
+        )
+    declared_pass = result.get("pass_id")
+    if not isinstance(declared_pass, str) or not declared_pass.strip():
+        raise EvidenceSpineError(
+            "completed/not_applicable result.pass_id 必须是原生非空字符串"
+        )
+    if declared_pass.strip() != pass_id:
+        raise EvidenceSpineError(
+            f"pass result 声明为 {declared_pass.strip()}，不能记录为 {pass_id}"
+        )
+
+    collection_fields = (
+        "findings",
+        "formal_findings",
+        "planned_items",
+        "diagnostics",
+        "claims",
+        "entries",
+        "mentions",
+        "review_tasks",
+        "review_candidates",
+        "values",
+        "symbols",
+    )
+    for key in collection_fields:
+        if key in result and not isinstance(result.get(key), list):
+            raise EvidenceSpineError(f"pass result.{key} 必须是数组")
+    for key in ("inventory", "inventories"):
+        if key in result and not isinstance(result.get(key), Mapping):
+            raise EvidenceSpineError(f"pass result.{key} 必须是对象")
+
+    summary_value = result.get("summary")
+    if "summary" in result and not isinstance(summary_value, Mapping):
+        raise EvidenceSpineError("pass result.summary 必须是对象")
+    summary = summary_value if isinstance(summary_value, Mapping) else {}
+    if (
+        "review_completed" in summary
+        and summary.get("review_completed") is not True
+    ):
+        raise EvidenceSpineError(
+            "completed result 的 summary.review_completed 若存在，必须为布尔值 true"
+        )
+
+    count_fields = {
+        "finding_count": "findings",
+        "formal_finding_count": "formal_findings",
+        "planned_item_count": "planned_items",
+        "diagnostic_count": "diagnostics",
+        "claim_count": "claims",
+        "mention_count": "mentions",
+        "clause_review_task_count": "review_tasks",
+        "review_candidate_count": "review_candidates",
+        "value_count": "values",
+        "symbol_count": "symbols",
+    }
+    for count_key, collection_key in count_fields.items():
+        if count_key not in summary:
+            continue
+        count = summary.get(count_key)
+        values = result.get(collection_key)
+        if isinstance(count, bool) or not isinstance(count, int):
+            raise EvidenceSpineError(
+                f"pass result.summary.{count_key} 必须是整数"
+            )
+        if not isinstance(values, list) or count != len(values):
+            raise EvidenceSpineError(
+                f"pass result.summary.{count_key} 与 {collection_key} 数量不一致"
+            )
+
+    if pass_id == "citation_integrity" and status == "completed":
+        entries = result.get("entries")
+        input_record = result.get("input")
+        entry_count = (
+            input_record.get("entry_count")
+            if isinstance(input_record, Mapping)
+            else None
+        )
+        if (
+            not isinstance(entries, list)
+            or isinstance(entry_count, bool)
+            or not isinstance(entry_count, int)
+            or entry_count != len(entries)
+        ):
+            raise EvidenceSpineError(
+                "citation_integrity result 的 input.entry_count 必须与 entries 一致"
+            )
+    return schema_version.strip()
+
+
 def _validate_not_applicable_inventory(result: Mapping[str, Any]) -> dict[str, Any]:
     inventory = result.get("inventory")
     if not isinstance(inventory, Mapping):
         raise EvidenceSpineError("not_applicable result 必须包含 inventory 对象")
-    scope = str(inventory.get("scope", "")).strip()
+    scope_value = inventory.get("scope")
+    scope = scope_value.strip() if isinstance(scope_value, str) else ""
     count = inventory.get("item_count")
     items = inventory.get("items")
     if not scope:
-        raise EvidenceSpineError("not_applicable inventory.scope 不能为空")
+        raise EvidenceSpineError("not_applicable inventory.scope 必须是原生非空字符串")
     if isinstance(count, bool) or not isinstance(count, int) or count != 0:
         raise EvidenceSpineError("not_applicable inventory.item_count 必须为整数 0")
     if not isinstance(items, list) or items:
@@ -957,18 +1115,493 @@ def _validate_not_applicable_inventory(result: Mapping[str, Any]) -> dict[str, A
     return {"scope": scope, "item_count": 0, "items": []}
 
 
-def _has_completed_result_evidence(result: Mapping[str, Any]) -> bool:
-    findings = result.get("findings", result.get("formal_findings"))
-    if isinstance(findings, list) and findings:
+def _has_completed_result_evidence(
+    result: Mapping[str, Any],
+    pass_id: str,
+) -> bool:
+    finding_lists = [
+        result.get(key)
+        for key in ("findings", "formal_findings")
+        if key in result
+    ]
+    if any(isinstance(items, list) and items for items in finding_lists):
         return True
-    if isinstance(result.get("summary"), Mapping) and result.get("summary"):
+    if pass_id == "claim_logic":
+        return (
+            result.get("semantic_audit_status") == "completed"
+            and isinstance(result.get("semantic_review"), Mapping)
+        )
+    summary = result.get("summary")
+    summary = summary if isinstance(summary, Mapping) else {}
+    if PASS_SPEC_BY_ID[pass_id]["semantic"]:
+        return summary.get("review_completed") is True
+    if summary.get("review_completed") is True:
         return True
-    if isinstance(result.get("inventory"), Mapping) or isinstance(result.get("inventories"), Mapping):
-        return True
-    for key in ("claims", "entries", "mentions", "review_tasks", "review_candidates", "values", "symbols"):
-        if isinstance(result.get(key), list) and key in result:
-            return True
+    if pass_id in {"deterministic_text", "quantitative"}:
+        return (
+            isinstance(result.get("findings"), list)
+            and "finding_count" in summary
+        )
+    if pass_id == "citation_integrity":
+        return isinstance(result.get("entries"), list)
     return False
+
+def _validate_embedded_manuscript_map(
+    result: Mapping[str, Any],
+    ledger: Mapping[str, Any],
+    *,
+    completion: str | None,
+    required: bool,
+) -> dict[str, Any] | None:
+    if result.get("artifact_type") == "manuscript_map_validation" or result.get(
+        "semantic_audit_status"
+    ) == "not_performed_by_validator":
+        raise EvidenceSpineError(
+            "论文主线结构校验器的原始输出不能作为 claim_logic 语义审核结果"
+        )
+    if required and result.get("pass_id") != "claim_logic":
+        raise EvidenceSpineError(
+            "draft/deep 的 claim_logic result 必须声明 pass_id=claim_logic"
+        )
+    if required and result.get("semantic_audit_status") != "completed":
+        raise EvidenceSpineError(
+            "draft/deep 的 claim_logic 必须声明 semantic_audit_status=completed"
+        )
+    embedded = result.get("manuscript_map_validation")
+    if embedded is None:
+        if required:
+            raise EvidenceSpineError(
+                "draft/deep 的 claim_logic completed result 必须包含 manuscript_map_validation"
+            )
+        return None
+    if not isinstance(embedded, Mapping):
+        raise EvidenceSpineError("manuscript_map_validation 必须是对象")
+    if result.get("semantic_audit_status") != "completed":
+        raise EvidenceSpineError(
+            "论文主线结构校验不能冒充语义审核；claim_logic 必须声明 semantic_audit_status=completed"
+        )
+    if embedded.get("artifact_type") != "manuscript_map_validation":
+        raise EvidenceSpineError("嵌入的论文主线产物类型无效")
+    if embedded.get("status") != "valid":
+        raise EvidenceSpineError("不能记录未通过结构校验的论文主线")
+    if embedded.get("validation_scope") != "structure_and_evidence_binding":
+        raise EvidenceSpineError("论文主线必须针对当前 evidence ledger 完成证据绑定")
+    embedded_provenance = (
+        embedded.get("provenance", {})
+        if isinstance(embedded.get("provenance"), Mapping)
+        else {}
+    )
+    if embedded_provenance.get("ledger_fingerprint") != ledger.get(
+        "ledger_fingerprint"
+    ):
+        raise EvidenceSpineError("论文主线使用了不同或过期的 ledger 指纹")
+    if embedded_provenance.get("input_fingerprint") != ledger.get(
+        "input_fingerprint"
+    ):
+        raise EvidenceSpineError("论文主线使用了不同或过期的输入指纹")
+
+    payload = {
+        "schema_version": embedded.get("schema_version"),
+        "artifact_type": "manuscript_map",
+        "manuscript_map": copy.deepcopy(embedded.get("manuscript_map")),
+    }
+    try:
+        revalidated = validate_manuscript_map(
+            payload,
+            ledger=ledger,
+            completion=completion,
+        )
+    except ManuscriptMapError as exc:
+        raise EvidenceSpineError(f"论文主线无法重新校验：{exc}") from exc
+    if revalidated.get("status") != "valid":
+        codes = ", ".join(
+            str(item.get("code", "invalid"))
+            for item in revalidated.get("errors", [])
+            if isinstance(item, Mapping)
+        )
+        raise EvidenceSpineError(f"论文主线重新校验失败：{codes or 'invalid'}")
+    return revalidated
+
+
+def _required_semantic_string(value: Any, label: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise EvidenceSpineError(f"{label} 必须是非空字符串")
+    return value.strip()
+
+
+def _validate_semantic_review_items(
+    values: Any,
+    *,
+    id_field: str,
+    expected_ids: set[str],
+    label: str,
+) -> tuple[list[dict[str, Any]], list[str]]:
+    if not isinstance(values, list):
+        raise EvidenceSpineError(f"semantic_review.{label} 必须是数组")
+    reviewed: list[dict[str, Any]] = []
+    assessments: list[str] = []
+    seen: set[str] = set()
+    for index, item in enumerate(values):
+        if not isinstance(item, Mapping):
+            raise EvidenceSpineError(
+                f"semantic_review.{label}[{index}] 必须是对象"
+            )
+        identifier = _required_semantic_string(
+            item.get(id_field),
+            f"semantic_review.{label}[{index}].{id_field}",
+        )
+        if identifier in seen:
+            raise EvidenceSpineError(
+                f"semantic_review.{label} 的 {id_field} 必须唯一且非空"
+            )
+        assessment = _required_semantic_string(
+            item.get("assessment"),
+            f"semantic_review.{label}[{index}].assessment",
+        )
+        if assessment not in SEMANTIC_REVIEW_ASSESSMENTS:
+            allowed = ", ".join(sorted(SEMANTIC_REVIEW_ASSESSMENTS))
+            raise EvidenceSpineError(
+                f"semantic_review.{label}[{index}].assessment 无效；允许：{allowed}"
+            )
+        _required_semantic_string(
+            item.get("rationale"),
+            f"semantic_review.{label}[{index}].rationale",
+        )
+        seen.add(identifier)
+        assessments.append(assessment)
+        reviewed.append(copy.deepcopy(dict(item)))
+
+    missing = sorted(expected_ids - seen)
+    extra = sorted(seen - expected_ids)
+    if missing or extra:
+        details: list[str] = []
+        if missing:
+            details.append(f"缺少 {', '.join(missing)}")
+        if extra:
+            details.append(f"额外 {', '.join(extra)}")
+        raise EvidenceSpineError(
+            f"semantic_review.{label} 未精确覆盖论文主线：{'；'.join(details)}"
+        )
+    return reviewed, assessments
+
+
+def _validate_claim_logic_semantic_review(
+    result: Mapping[str, Any],
+    map_validation: Mapping[str, Any] | None,
+    ledger: Mapping[str, Any],
+    *,
+    reviewer: str,
+) -> dict[str, Any]:
+    reviewer = _required_semantic_string(reviewer, "claim_logic reviewer")
+    if result.get("semantic_audit_status") != "completed":
+        raise EvidenceSpineError(
+            "claim_logic 必须声明 semantic_audit_status=completed"
+        )
+    review = result.get("semantic_review")
+    if not isinstance(review, Mapping):
+        raise EvidenceSpineError("claim_logic 必须包含 semantic_review 对象")
+    scope = _required_semantic_string(review.get("scope"), "semantic_review.scope")
+    reviewed_by = _required_semantic_string(
+        review.get("reviewed_by"), "semantic_review.reviewed_by"
+    )
+    if reviewed_by != reviewer:
+        raise EvidenceSpineError(
+            "semantic_review.reviewed_by 必须与 coverage reviewer 完全一致"
+        )
+    if review.get("ledger_fingerprint") != ledger.get("ledger_fingerprint"):
+        raise EvidenceSpineError("semantic_review 使用了不同或过期的 ledger 指纹")
+    if review.get("input_fingerprint") != ledger.get("input_fingerprint"):
+        raise EvidenceSpineError("semantic_review 使用了不同或过期的输入指纹")
+
+    map_value = (
+        map_validation.get("manuscript_map", {})
+        if isinstance(map_validation, Mapping)
+        else {}
+    )
+    nodes = map_value.get("nodes", []) if isinstance(map_value, Mapping) else []
+    edges = map_value.get("edges", []) if isinstance(map_value, Mapping) else []
+    expected_node_ids = {
+        str(item.get("id", ""))
+        for item in nodes
+        if isinstance(item, Mapping) and str(item.get("id", "")).strip()
+    }
+    expected_edge_ids = {
+        str(item.get("id", ""))
+        for item in edges
+        if isinstance(item, Mapping) and str(item.get("id", "")).strip()
+    }
+    node_reviews, node_assessments = _validate_semantic_review_items(
+        review.get("node_reviews"),
+        id_field="node_id",
+        expected_ids=expected_node_ids,
+        label="node_reviews",
+    )
+    edge_reviews, edge_assessments = _validate_semantic_review_items(
+        review.get("edge_reviews"),
+        id_field="edge_id",
+        expected_ids=expected_edge_ids,
+        label="edge_reviews",
+    )
+
+    gaps = (
+        map_validation.get("contract_gaps", [])
+        if isinstance(map_validation, Mapping)
+        else []
+    )
+    gaps = gaps if isinstance(gaps, list) else []
+    gap_reviews_value = review.get("contract_gap_reviews")
+    if not isinstance(gap_reviews_value, list):
+        raise EvidenceSpineError(
+            "semantic_review.contract_gap_reviews 必须是数组"
+        )
+    gap_reviews: list[dict[str, Any]] = []
+    seen_gap_indices: set[int] = set()
+    for position, item in enumerate(gap_reviews_value):
+        if not isinstance(item, Mapping):
+            raise EvidenceSpineError(
+                f"semantic_review.contract_gap_reviews[{position}] 必须是对象"
+            )
+        gap_index = item.get("gap_index")
+        if (
+            isinstance(gap_index, bool)
+            or not isinstance(gap_index, int)
+            or gap_index < 0
+            or gap_index >= len(gaps)
+            or gap_index in seen_gap_indices
+        ):
+            raise EvidenceSpineError(
+                "semantic_review.contract_gap_reviews.gap_index 必须唯一并对应现有 gap"
+            )
+        gap = gaps[gap_index]
+        gap = gap if isinstance(gap, Mapping) else {}
+        if (
+            item.get("gap_code") != gap.get("code")
+            or item.get("gap_path") != gap.get("path")
+        ):
+            raise EvidenceSpineError(
+                f"semantic_review.contract_gap_reviews[{position}] 未绑定对应 contract gap"
+            )
+        assessment = _required_semantic_string(
+            item.get("assessment"),
+            f"semantic_review.contract_gap_reviews[{position}].assessment",
+        )
+        if assessment not in UNRESOLVED_SEMANTIC_ASSESSMENTS:
+            raise EvidenceSpineError(
+                "contract gap 的 assessment 必须明确为 unresolved、contradicted、"
+                "not_yet_written 或 not_applicable"
+            )
+        _required_semantic_string(
+            item.get("rationale"),
+            f"semantic_review.contract_gap_reviews[{position}].rationale",
+        )
+        seen_gap_indices.add(gap_index)
+        gap_reviews.append(copy.deepcopy(dict(item)))
+    if seen_gap_indices != set(range(len(gaps))):
+        raise EvidenceSpineError(
+            "semantic_review.contract_gap_reviews 必须逐项覆盖全部 contract_gaps"
+        )
+
+    assessments = node_assessments + edge_assessments
+    has_unresolved = any(
+        value in UNRESOLVED_SEMANTIC_ASSESSMENTS for value in assessments
+    ) or bool(gap_reviews)
+    if (
+        isinstance(map_validation, Mapping)
+        and map_validation.get("argument_status") != "closed"
+        and expected_node_ids | expected_edge_ids
+        and not has_unresolved
+    ):
+        raise EvidenceSpineError(
+            "argument_status 未闭环时，semantic_review 不能把全部节点和边标为 satisfied"
+        )
+    return {
+        "scope": scope,
+        "reviewed_by": reviewed_by,
+        "input_fingerprint": ledger.get("input_fingerprint"),
+        "ledger_fingerprint": ledger.get("ledger_fingerprint"),
+        "node_reviews": node_reviews,
+        "edge_reviews": edge_reviews,
+        "contract_gap_reviews": gap_reviews,
+        "has_unresolved_assessment": has_unresolved,
+    }
+
+
+def _validate_claim_logic_work_items(
+    result: Mapping[str, Any],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    embedded = result.get("manuscript_map_validation")
+    map_value = (
+        embedded.get("manuscript_map", {})
+        if isinstance(embedded, Mapping)
+        else {}
+    )
+    nodes = map_value.get("nodes", []) if isinstance(map_value, Mapping) else []
+    known_node_ids = {
+        str(item.get("id", ""))
+        for item in nodes
+        if isinstance(item, Mapping) and str(item.get("id", "")).strip()
+    }
+
+    questions_value = result.get("questions_for_author", [])
+    if not isinstance(questions_value, list):
+        raise EvidenceSpineError("questions_for_author 必须是数组")
+    questions: list[dict[str, Any]] = []
+    question_ids: set[str] = set()
+    for index, item in enumerate(questions_value):
+        if not isinstance(item, Mapping):
+            raise EvidenceSpineError(f"questions_for_author[{index}] 必须是对象")
+        identifier = str(item.get("id", "")).strip()
+        if not identifier or identifier in question_ids:
+            raise EvidenceSpineError("给作者的问题必须具有唯一且非空的 id")
+        for field in ("question", "why_it_matters", "needed_evidence_or_decision"):
+            if not str(item.get(field, "")).strip():
+                raise EvidenceSpineError(f"{identifier} 缺少 {field}")
+        node_ids = item.get("node_ids")
+        if not isinstance(node_ids, list) or not node_ids:
+            raise EvidenceSpineError(f"{identifier}.node_ids 必须是非空数组")
+        if any(not isinstance(value, str) or not value.strip() for value in node_ids):
+            raise EvidenceSpineError(f"{identifier}.node_ids 含无效节点 ID")
+        unknown = sorted(set(node_ids) - known_node_ids)
+        if unknown:
+            raise EvidenceSpineError(
+                f"{identifier} 引用了未知论文主线节点：{', '.join(unknown)}"
+            )
+        question_ids.add(identifier)
+        questions.append(copy.deepcopy(dict(item)))
+
+    tasks_value = result.get("next_writing_tasks", [])
+    if not isinstance(tasks_value, list):
+        raise EvidenceSpineError("next_writing_tasks 必须是数组")
+    tasks: list[dict[str, Any]] = []
+    seen_task_ids: set[str] = set()
+    for index, item in enumerate(tasks_value):
+        if not isinstance(item, Mapping):
+            raise EvidenceSpineError(f"next_writing_tasks[{index}] 必须是对象")
+        identifier = str(item.get("id", "")).strip()
+        if not identifier or identifier in seen_task_ids:
+            raise EvidenceSpineError("下一步任务必须具有唯一且非空的 id")
+        for field in ("task", "why_now", "completion_evidence"):
+            if not str(item.get(field, "")).strip():
+                raise EvidenceSpineError(f"{identifier} 缺少 {field}")
+        depends_on = item.get("depends_on")
+        if not isinstance(depends_on, list) or any(
+            not isinstance(value, str) or not value.strip() for value in depends_on
+        ):
+            raise EvidenceSpineError(f"{identifier}.depends_on 必须是任务 ID 数组")
+        unknown_dependencies = sorted(set(depends_on) - seen_task_ids)
+        if unknown_dependencies:
+            raise EvidenceSpineError(
+                f"{identifier} 依赖尚未出现的任务：{', '.join(unknown_dependencies)}"
+            )
+        seen_task_ids.add(identifier)
+        tasks.append(copy.deepcopy(dict(item)))
+    return questions, tasks
+
+
+def _planned_target_occurrence_matches(
+    *,
+    check_id: str,
+    quote: str,
+    target_kind: str,
+    target_identifier: str,
+) -> bool:
+    if check_id == "crossref-callout-planned-target":
+        if target_kind not in {"figure", "table", "equation"}:
+            return False
+        for match in CALLOUT_RE.finditer(quote):
+            if (
+                _crossref_kind(match.group("label")) == target_kind
+                and match.group("identifier").casefold()
+                == target_identifier.casefold()
+                and _is_explicitly_planned_target(
+                    quote, match.start(), match.end()
+                )
+            ):
+                return True
+        return False
+    if check_id == "latex-reference-planned-label":
+        if target_kind != "latex-label":
+            return False
+        for match in LATEX_REFERENCE_RE.finditer(quote):
+            keys = [
+                key.strip()
+                for key in match.group(1).split(",")
+                if key.strip()
+            ]
+            if (
+                target_identifier in keys
+                and _is_explicitly_planned_target(
+                    quote, match.start(), match.end()
+                )
+            ):
+                return True
+        return False
+    return False
+
+
+def _validate_draft_planned_items(
+    result: Mapping[str, Any],
+) -> list[dict[str, Any]]:
+    values = result.get("planned_items", [])
+    if not isinstance(values, list):
+        raise EvidenceSpineError("planned_items 必须是数组")
+    if values and result.get("manuscript_stage") != "draft":
+        raise EvidenceSpineError(
+            "planned_items 只能来自 manuscript_stage=draft 的确定性审核"
+        )
+    planned: list[dict[str, Any]] = []
+    identifiers: set[str] = set()
+    for index, item in enumerate(values):
+        if not isinstance(item, Mapping):
+            raise EvidenceSpineError(f"planned_items[{index}] 必须是对象")
+        identifier = str(item.get("id", "")).strip()
+        if not identifier.startswith("PLAN-") or identifier in identifiers:
+            raise EvidenceSpineError("planned_items 必须具有唯一的 PLAN-* id")
+        check_id = str(item.get("check_id", "")).strip()
+        if check_id not in VALID_DRAFT_PLANNED_CHECKS:
+            raise EvidenceSpineError(
+                f"{identifier} 使用了不允许的 planned check_id：{check_id}"
+            )
+        if item.get("status") != "planned":
+            raise EvidenceSpineError(f"{identifier}.status 必须为 planned")
+        location = item.get("location")
+        if not isinstance(location, Mapping) or not str(
+            location.get("source", "")
+        ).strip():
+            raise EvidenceSpineError(f"{identifier}.location 必须含 source")
+        if not any(
+            isinstance(location.get(field), int) and location.get(field) >= 0
+            for field in ("line", "paragraph", "page")
+        ):
+            raise EvidenceSpineError(
+                f"{identifier}.location 必须含 line、paragraph 或 page"
+            )
+        if not str(item.get("quote", "")).strip():
+            raise EvidenceSpineError(f"{identifier}.quote 不能为空")
+        target = item.get("target")
+        if not isinstance(target, Mapping) or not str(
+            target.get("kind", "")
+        ).strip() or not str(target.get("identifier", "")).strip():
+            raise EvidenceSpineError(
+                f"{identifier}.target 必须含 kind 与 identifier"
+            )
+        quote = str(item.get("quote", ""))
+        target_kind = str(target.get("kind", "")).strip()
+        target_identifier = str(target.get("identifier", "")).strip()
+        if not _planned_target_occurrence_matches(
+            check_id=check_id,
+            quote=quote,
+            target_kind=target_kind,
+            target_identifier=target_identifier,
+        ):
+            raise EvidenceSpineError(
+                f"{identifier} 的 quote 不含与 check_id/target 匹配的明确计划 occurrence"
+            )
+        if not str(item.get("next_step", "")).strip():
+            raise EvidenceSpineError(f"{identifier}.next_step 不能为空")
+        identifiers.add(identifier)
+        planned.append(copy.deepcopy(dict(item)))
+    return planned
 
 
 def _parse_capability_updates(values: Sequence[str]) -> dict[str, str]:
@@ -983,6 +1616,99 @@ def _parse_capability_updates(values: Sequence[str]) -> dict[str, str]:
             raise EvidenceSpineError(f"证据能力状态无效：{status}")
         updates[name] = status
     return updates
+
+
+def _validate_pass_result_payload(
+    result: Mapping[str, Any],
+    ledger: Mapping[str, Any],
+    *,
+    pass_id: str,
+    status: str,
+    mode: str,
+    reviewer: Any,
+    attest_ledger_read: bool,
+) -> dict[str, Any]:
+    schema_version = _validate_result_envelope_shape(
+        result,
+        pass_id=pass_id,
+        status=status,
+    )
+    warnings, source_bound = _validate_result_sources(result, ledger)
+    provenance = (
+        result.get("provenance", {})
+        if isinstance(result.get("provenance"), Mapping)
+        else {}
+    )
+    native_fingerprint = provenance.get("ledger_fingerprint")
+    if (
+        provenance.get("input_fingerprint")
+        and provenance.get("input_fingerprint") != ledger.get("input_fingerprint")
+    ):
+        raise EvidenceSpineError("pass result 使用了不同或过期的输入指纹")
+    reviewer_text = reviewer.strip() if isinstance(reviewer, str) else ""
+    if native_fingerprint:
+        if native_fingerprint != ledger["ledger_fingerprint"]:
+            raise EvidenceSpineError("pass result 使用了不同或过期的 ledger 指纹")
+        binding = "native"
+    elif PASS_SPEC_BY_ID[pass_id]["semantic"]:
+        if not attest_ledger_read or not reviewer_text:
+            raise EvidenceSpineError(
+                "语义 pass 缺少原生 ledger 指纹；必须提供 --attest-ledger-read 和 --reviewer"
+            )
+        if not source_bound:
+            raise EvidenceSpineError("语义 pass 的人工绑定仍需当前输入哈希")
+        binding = "reviewer_attested"
+    else:
+        if not source_bound:
+            raise EvidenceSpineError("非语义 pass 必须提供当前输入哈希或原生 ledger 指纹")
+        binding = "paired_after_run"
+
+    if status == "completed" and pass_id == "claim_logic":
+        map_completion = (
+            "draft"
+            if mode == "draft"
+            else "complete" if mode == "deep" else None
+        )
+        map_validation = _validate_embedded_manuscript_map(
+            result,
+            ledger,
+            completion=map_completion,
+            required=mode in {"draft", "deep"},
+        )
+        _validate_claim_logic_semantic_review(
+            result,
+            map_validation,
+            ledger,
+            reviewer=reviewer,
+        )
+        _validate_claim_logic_work_items(result)
+    if status == "completed" and pass_id == "deterministic_text":
+        planned_items = _validate_draft_planned_items(result)
+        if planned_items and mode != "draft":
+            raise EvidenceSpineError(
+                "draft planned_items 不能记录到非 draft evidence spine"
+            )
+
+    inventory: dict[str, Any] | None = None
+    if status == "not_applicable":
+        inventory = _validate_not_applicable_inventory(result)
+    elif not _has_completed_result_evidence(result, pass_id):
+        raise EvidenceSpineError(
+            "completed result 缺少与 pass 匹配的可核验执行证据，不能证明审核已完成"
+        )
+    findings = result.get("findings", result.get("formal_findings", []))
+    return {
+        "schema_version": schema_version,
+        "finding_count": len(findings) if isinstance(findings, list) else None,
+        "planned_item_count": (
+            len(result.get("planned_items", []))
+            if isinstance(result.get("planned_items"), list)
+            else None
+        ),
+        "binding": binding,
+        "warnings": warnings,
+        "inventory": inventory,
+    }
 
 
 def record_pass(
@@ -1003,6 +1729,11 @@ def record_pass(
         raise EvidenceSpineError(f"未知 pass：{pass_id}")
     if status not in VALID_PASS_STATUSES - {"not_run"}:
         raise EvidenceSpineError("record-pass 不能写入该状态")
+    if (
+        status == "not_applicable"
+        and not PASS_SPEC_BY_ID[pass_id]["allow_not_applicable"]
+    ):
+        raise EvidenceSpineError(f"pass {pass_id} 始终适用，不能标记为 not_applicable")
     coverage = load_json_object(coverage_path, "coverage.json")
     ledger = load_json_object(ledger_path, "evidence-ledger.json")
     _validate_contract_pair(coverage, ledger)
@@ -1055,23 +1786,60 @@ def record_pass(
             if not source_bound:
                 raise EvidenceSpineError("非语义 pass 必须提供当前输入哈希或原生 ledger 指纹")
             binding = "paired_after_run"
+        if status == "completed" and pass_id == "claim_logic":
+            map_completion = (
+                "draft"
+                if coverage.get("mode") == "draft"
+                else "complete" if coverage.get("mode") == "deep" else None
+            )
+            map_validation = _validate_embedded_manuscript_map(
+                result,
+                ledger,
+                completion=map_completion,
+                required=coverage.get("mode") in {"draft", "deep"},
+            )
+            _validate_claim_logic_semantic_review(
+                result,
+                map_validation,
+                ledger,
+                reviewer=reviewer,
+            )
+            _validate_claim_logic_work_items(result)
+        if status == "completed" and pass_id == "deterministic_text":
+            planned_items = _validate_draft_planned_items(result)
+            if planned_items and coverage.get("mode") != "draft":
+                raise EvidenceSpineError(
+                    "draft planned_items 不能记录到非 draft evidence spine"
+                )
         inventory: dict[str, Any] | None = None
         if status == "not_applicable":
             inventory = _validate_not_applicable_inventory(result)
-        elif not _has_completed_result_evidence(result):
+        elif not _has_completed_result_evidence(result, pass_id):
             raise EvidenceSpineError(
-                "completed result 缺少 findings、summary 或可核验 inventory，不能证明 pass 已执行"
+                "completed result 缺少与 pass 匹配的可核验执行证据，不能证明审核已完成"
             )
+        validated_result = _validate_pass_result_payload(
+            result,
+            ledger,
+            pass_id=pass_id,
+            status=status,
+            mode=str(coverage.get("mode", "")),
+            reviewer=reviewer,
+            attest_ledger_read=attest_ledger_read,
+        )
+        binding = str(validated_result["binding"])
+
         findings = result.get("findings", result.get("formal_findings", []))
         result_record = {
             "path": str(result_file),
             "sha256": sha256_file(result_file),
-            "schema_version": result.get("schema_version", "unknown"),
-            "finding_count": len(findings) if isinstance(findings, list) else None,
+            "schema_version": validated_result["schema_version"],
+            "finding_count": validated_result["finding_count"],
             "ledger_fingerprint": ledger["ledger_fingerprint"],
+            "planned_item_count": validated_result["planned_item_count"],
             "binding": binding,
-            "warnings": warnings,
-            "inventory": inventory,
+            "warnings": validated_result["warnings"],
+            "inventory": validated_result["inventory"],
         }
 
     pass_record.update(
@@ -1343,6 +2111,34 @@ def _anchor_finding(
             return False, [], f"related_{reason}"
         evidence_ids.extend(related_ids)
     return True, sorted(set(evidence_ids)), "verified"
+
+
+def _anchor_draft_planned_item(
+    item: Mapping[str, Any],
+    units: Sequence[SourceUnit],
+    evidence_by_source: Mapping[str, Sequence[Mapping[str, Any]]],
+) -> tuple[bool, list[str], str]:
+    """Anchor a planned quote in one direction: quote must come from source."""
+    location = item.get("location")
+    if not isinstance(location, Mapping):
+        return False, [], "missing_location"
+    source = str(location.get("source", ""))
+    source_path = Path(source)
+    if source_path.is_absolute() or ".." in source_path.parts:
+        return False, [], "unsafe_source_locator"
+    unit = _match_unit(units, source)
+    if unit is None:
+        return False, [], "source_not_found_or_ambiguous"
+    quote = normalize_text(item.get("quote"))
+    if not quote:
+        return False, [], "missing_quote"
+    blocks = _candidate_blocks(unit, location)
+    if not blocks:
+        return False, [], "locator_not_resolved"
+    source_window = normalize_text("\n".join(block.raw for block in blocks))
+    if quote not in source_window:
+        return False, [], "planned_quote_not_found_near_locator"
+    return _anchor_finding(item, units, evidence_by_source)
 
 
 def _required_capabilities(finding: Mapping[str, Any], pass_id: str) -> list[str]:
@@ -1872,9 +2668,16 @@ def _format_location(location: Mapping[str, Any]) -> str:
         pieces.append(str(location["section"]))
     return " / ".join(pieces)
 
+def _markdown_cell(value: Any) -> str:
+    text = str(value if value not in (None, "") else "unknown")
+    return text.replace("|", r"\|").replace("\r", " ").replace("\n", " ")
+
+
 
 def render_report(data: Mapping[str, Any]) -> str:
     summary = data.get("summary", {})
+    mode = str(data.get("mode", data.get("coverage", {}).get("mode", "")))
+    report_title = "# 论文写作导航报告" if mode == "draft" else "# 论文审核裁决报告"
     lines = [
         "# 论文审核裁决报告",
         "",
@@ -1882,9 +2685,12 @@ def render_report(data: Mapping[str, Any]) -> str:
         f"- 投稿准备度：`{data.get('submission_readiness', '')}`",
         f"- 正式发现：{summary.get('formal_finding_count', 0)}",
         f"- 人工确认项：{summary.get('manual_check_count', 0)}",
+        f"- 草稿计划项：{summary.get('draft_planned_item_count', 0)}",
         f"- 报告指纹：`{data.get('report_fingerprint', '')}`",
         "",
     ]
+    lines[0] = report_title
+    lines.insert(2, f"- 工作模式：`{mode}`")
     if data.get("review_status") != "complete":
         lines.extend(
             [
@@ -1899,8 +2705,143 @@ def render_report(data: Mapping[str, Any]) -> str:
         lines.append(
             f"- `{item.get('pass_id')}`（{marker}）：`{item.get('status')}`{rationale}"
         )
-    lines.extend(["", "## 正式发现", ""])
+    map_validation = data.get("manuscript_map_validation")
+    planned_items = data.get("draft_planned_items", [])
+    planned_items = planned_items if isinstance(planned_items, list) else []
+    if planned_items:
+        lines.extend(
+            [
+                "",
+                "## 草稿计划项（尚未完成，不是缺陷）",
+                "",
+            ]
+        )
+        for item in planned_items:
+            if not isinstance(item, Mapping):
+                continue
+            target = item.get("target", {})
+            target = target if isinstance(target, Mapping) else {}
+            lines.extend(
+                [
+                    f"### {item.get('id', '')} · "
+                    f"{target.get('kind', '')} {target.get('identifier', '')}",
+                    "",
+                    f"- 位置：{_format_location(item.get('location', {}))}",
+                    f"- 当前文字：{item.get('quote', '')}",
+                    f"- 下一步：{item.get('next_step', '')}",
+                    "",
+                ]
+            )
+    if isinstance(map_validation, Mapping):
+        map_value = map_validation.get("manuscript_map", {})
+        map_value = map_value if isinstance(map_value, Mapping) else {}
+        card = map_value.get("card", {})
+        card = card if isinstance(card, Mapping) else {}
+        boundaries = card.get("scope_boundaries", [])
+        boundaries = boundaries if isinstance(boundaries, list) else []
+        lines.extend(
+            [
+                "",
+                "## 论文主线卡",
+                "",
+                f"- 地图契约状态：`{map_validation.get('status', '')}`",
+                f"- 论证闭环状态：`{map_validation.get('argument_status', '')}`",
+                "",
+                "| 项目 | 当前记录 |",
+                "|---|---|",
+            ]
+        )
+        for label, value in (
+            ("目标期刊", card.get("target_journal")),
+            ("文章类型", card.get("article_type")),
+            ("研究问题", card.get("research_question")),
+            ("中心信息", card.get("central_message")),
+            ("范围边界", "；".join(str(item) for item in boundaries)),
+        ):
+            lines.append(f"| {label} | {_markdown_cell(value)} |")
+        lines.extend(
+            [
+                "",
+                "## 主线追踪",
+                "",
+                "| 起点 | 关系 | 终点 | 状态 | 证据绑定 |",
+                "|---|---|---|---|---|",
+            ]
+        )
+        rows = map_validation.get("traceability_rows", [])
+        rows = rows if isinstance(rows, list) else []
+        if not rows:
+            lines.append("| — | — | — | — | — |")
+        for row in rows:
+            if not isinstance(row, Mapping):
+                continue
+            source = " · ".join(
+                str(row.get(key, ""))
+                for key in ("from_id", "from_role", "from_label")
+                if str(row.get(key, "")).strip()
+            )
+            target = " · ".join(
+                str(row.get(key, ""))
+                for key in ("to_id", "to_role", "to_label")
+                if str(row.get(key, "")).strip()
+            )
+            lines.append(
+                "| "
+                + " | ".join(
+                    _markdown_cell(value)
+                    for value in (
+                        source,
+                        row.get("relation"),
+                        target,
+                        row.get("status"),
+                        row.get("evidence_binding"),
+                    )
+                )
+                + " |"
+            )
+        valid_rows = [row for row in rows if isinstance(row, Mapping)]
+        satisfied = [
+            row
+            for row in valid_rows
+            if row.get("status") == "verified"
+            and row.get("evidence_binding") == "verified"
+        ]
+        unresolved = [row for row in valid_rows if row not in satisfied]
+        lines.extend(["", "### 已满足的功能连接", ""])
+        if not satisfied:
+            lines.append("当前尚无同时完成状态确认与证据绑定的连接。")
+        for row in satisfied:
+            lines.append(
+                f"- `{row.get('edge_id', '')}`：{row.get('from_id', '')} "
+                f"—{row.get('relation', '')}→ {row.get('to_id', '')}"
+            )
+        lines.extend(["", "### 尚未解决的功能连接", ""])
+        if not unresolved:
+            lines.append("无。")
+        for row in unresolved:
+            lines.append(
+                f"- `{row.get('edge_id', '')}`：{row.get('from_id', '')} "
+                f"—{row.get('relation', '')}→ {row.get('to_id', '')}；"
+                f"状态 `{row.get('status', '')}`，证据绑定 "
+                f"`{row.get('evidence_binding', '')}`"
+            )
+        gaps = map_validation.get("contract_gaps", [])
+        gaps = gaps if isinstance(gaps, list) else []
+        lines.extend(["", "### 论证契约缺口", ""])
+        if not gaps:
+            lines.append("无。")
+        for item in gaps:
+            if not isinstance(item, Mapping):
+                continue
+            lines.extend(
+                [
+                    f"- `{item.get('code', '')}`",
+                    f"  - 路径：`{item.get('path', '')}`",
+                    f"  - 说明：{item.get('message', '')}",
+                ]
+            )
     findings = data.get("findings", [])
+    lines.extend(["", "## 正式发现", ""])
     if not findings:
         lines.append("在当前已完成且证据充分的审核范围内，没有形成正式发现。")
     for item in findings:
@@ -1930,6 +2871,46 @@ def render_report(data: Mapping[str, Any]) -> str:
                 f"  - 原文：{item.get('quote', '')}",
             ]
         )
+    questions = data.get("questions_for_author", [])
+    questions = questions if isinstance(questions, list) else []
+    if isinstance(map_validation, Mapping) or questions:
+        lines.extend(["", "## 给作者的问题", ""])
+        if not questions:
+            lines.append("无。")
+        for item in questions:
+            if not isinstance(item, Mapping):
+                continue
+            nodes = ", ".join(str(value) for value in item.get("node_ids", []))
+            lines.extend(
+                [
+                    f"### {item.get('id', '')} · {item.get('question', '')}",
+                    "",
+                    f"- 相关主线节点：{nodes}",
+                    f"- 为什么重要：{item.get('why_it_matters', '')}",
+                    f"- 需要补充：{item.get('needed_evidence_or_decision', '')}",
+                    "",
+                ]
+            )
+    tasks = data.get("next_writing_tasks", [])
+    tasks = tasks if isinstance(tasks, list) else []
+    if isinstance(map_validation, Mapping) or tasks:
+        lines.extend(["## 下一步写作/证据任务", ""])
+        if not tasks:
+            lines.append("无。")
+        for index, item in enumerate(tasks, start=1):
+            if not isinstance(item, Mapping):
+                continue
+            dependencies = ", ".join(
+                str(value) for value in item.get("depends_on", [])
+            ) or "无"
+            lines.extend(
+                [
+                    f"{index}. **{item.get('id', '')}**：{item.get('task', '')}",
+                    f"   - 为什么现在做：{item.get('why_now', '')}",
+                    f"   - 完成证据：{item.get('completion_evidence', '')}",
+                    f"   - 前置任务：{dependencies}",
+                ]
+            )
     lines.extend(["", "## 诊断", ""])
     diagnostics = data.get("diagnostics", [])
     if diagnostics:
@@ -1978,6 +2959,11 @@ def adjudicate_report(
 
     formal: list[dict[str, Any]] = []
     manual: list[dict[str, Any]] = []
+    manuscript_map_validation: dict[str, Any] | None = None
+    claim_logic_semantic_review: dict[str, Any] | None = None
+    questions_for_author: list[dict[str, Any]] = []
+    next_writing_tasks: list[dict[str, Any]] = []
+    draft_planned_items: list[dict[str, Any]] = []
     external_evidence_by_id: dict[str, dict[str, Any]] = {}
     artifact_text_cache: dict[str, list[SourceUnit]] = {}
     seen: dict[str, bytes] = {}
@@ -2016,9 +3002,100 @@ def adjudicate_report(
             if required:
                 incomplete_required = True
             continue
+        try:
+            result = load_json_object(result_path, f"{pass_id} result")
+            validated_result = _validate_pass_result_payload(
+                result,
+                ledger,
+                pass_id=pass_id,
+                status=status,
+                mode=str(coverage.get("mode", "")),
+                reviewer=pass_record.get("reviewer", ""),
+                attest_ledger_read=(
+                    result_record.get("binding") == "reviewer_attested"
+                ),
+            )
+            recorded_metadata = {
+                key: result_record.get(key)
+                for key in (
+                    "schema_version",
+                    "finding_count",
+                    "planned_item_count",
+                    "binding",
+                    "warnings",
+                    "inventory",
+                )
+            }
+            if canonical_json(recorded_metadata) != canonical_json(validated_result):
+                raise EvidenceSpineError("coverage result metadata 与当前 pass result 不一致")
+            if pass_record.get("ledger_binding") != validated_result.get("binding"):
+                raise EvidenceSpineError("coverage ledger_binding 与 pass result 不一致")
+        except (EvidenceSpineError, OSError, json.JSONDecodeError) as exc:
+            diagnostics.append(f"invalid_pass_result_contract:{pass_id}:{exc}")
+            if required:
+                incomplete_required = True
+            continue
         if status == "not_applicable":
             continue
-        result = load_json_object(result_path, f"{pass_id} result")
+        if pass_id == "deterministic_text":
+            try:
+                planned_items = _validate_draft_planned_items(result)
+                if planned_items and coverage.get("mode") != "draft":
+                    raise EvidenceSpineError(
+                        "draft planned_items 出现在非 draft evidence spine"
+                    )
+            except EvidenceSpineError as exc:
+                diagnostics.append(f"invalid_draft_planned_items:{exc}")
+                incomplete_required = True
+                continue
+            for planned_item in planned_items:
+                anchored, attached_ids, anchor_status = _anchor_draft_planned_item(
+                    planned_item,
+                    units,
+                    evidence_by_source,
+                )
+                if not anchored:
+                    diagnostics.append(
+                        "invalid_draft_planned_item_anchor:"
+                        f"{planned_item.get('id', '')}:{anchor_status}"
+                    )
+                    incomplete_required = True
+                    continue
+                planned_item["origin_pass"] = pass_id
+                planned_item["evidence_ids"] = attached_ids
+                draft_planned_items.append(planned_item)
+        if pass_id == "claim_logic":
+            map_completion = (
+                "draft"
+                if coverage.get("mode") == "draft"
+                else "complete" if coverage.get("mode") == "deep" else None
+            )
+            try:
+                manuscript_map_validation = _validate_embedded_manuscript_map(
+                    result,
+                    ledger,
+                    completion=map_completion,
+                    required=coverage.get("mode") in {"draft", "deep"},
+                )
+                claim_logic_semantic_review = (
+                    _validate_claim_logic_semantic_review(
+                        result,
+                        manuscript_map_validation,
+                        ledger,
+                        reviewer=str(pass_record.get("reviewer", "")),
+                    )
+                )
+                questions_for_author, next_writing_tasks = (
+                    _validate_claim_logic_work_items(result)
+                )
+            except EvidenceSpineError as exc:
+                diagnostics.append(f"invalid_claim_logic_contract:{exc}")
+                manuscript_map_validation = None
+                claim_logic_semantic_review = None
+                questions_for_author = []
+                next_writing_tasks = []
+                incomplete_required = True
+                continue
         for candidate in _result_manual_candidates(result, pass_id):
             manual_reason = str(candidate.pop("_manual_reason", "unresolved_review_item"))
             anchored, attached_ids, anchor_status = _anchor_finding(
@@ -2146,10 +3223,36 @@ def adjudicate_report(
 
     formal.sort(key=_finding_sort_key)
     manual.sort(key=_finding_sort_key)
+    draft_planned_items.sort(
+        key=lambda item: (
+            _source_key(item.get("location", {}).get("source", "")),
+            item.get("location", {}).get("page", 0),
+            item.get("location", {}).get("paragraph", 0),
+            item.get("location", {}).get("line", 0),
+            str(item.get("id", "")),
+        )
+    )
+    has_revision_finding = any(
+        item.get("severity") in {"Blocker", "Major", "Minor"}
+        for item in formal
+    )
+    deep_argument_unresolved = (
+        coverage.get("mode") == "deep"
+        and isinstance(manuscript_map_validation, Mapping)
+        and manuscript_map_validation.get("argument_status") != "closed"
+    )
+    semantic_assessment_unresolved = bool(
+        isinstance(claim_logic_semantic_review, Mapping)
+        and claim_logic_semantic_review.get("has_unresolved_assessment")
+    )
     if review_status != "complete" or contested or manual:
         readiness = "manual_confirmation_required"
-    elif any(item.get("severity") in {"Blocker", "Major", "Minor"} for item in formal):
+    elif has_revision_finding:
         readiness = "revision_required"
+    elif coverage.get("mode") == "draft":
+        readiness = "draft_in_progress"
+    elif deep_argument_unresolved or semantic_assessment_unresolved:
+        readiness = "manual_confirmation_required"
     else:
         readiness = "ready_given_evidence"
 
@@ -2193,12 +3296,30 @@ def adjudicate_report(
         "ledger_fingerprint": ledger["ledger_fingerprint"],
         "final_ledger_fingerprint": final_ledger["ledger_fingerprint"],
         "coverage_fingerprint": coverage["coverage_fingerprint"],
+        "mode": coverage["mode"],
         "review_status": review_status,
         "submission_readiness": readiness,
         "summary": {
             "formal_finding_count": len(formal),
             "manual_check_count": len(manual),
             "external_evidence_count": len(external_evidence),
+            "question_for_author_count": len(questions_for_author),
+            "draft_planned_item_count": len(draft_planned_items),
+            "next_writing_task_count": len(next_writing_tasks),
+            "manuscript_map_status": (
+                manuscript_map_validation.get("status")
+                if isinstance(manuscript_map_validation, Mapping)
+                else None
+            ),
+            "manuscript_argument_status": (
+                manuscript_map_validation.get("argument_status")
+                if isinstance(manuscript_map_validation, Mapping)
+                else None
+            ),
+            "manuscript_contract_gap_count": len(
+                manuscript_map_validation.get("contract_gaps", [])
+            ) if isinstance(manuscript_map_validation, Mapping) else 0,
+            "claim_logic_unresolved_assessment": semantic_assessment_unresolved,
             "by_severity": dict(
                 sorted(Counter(item.get("severity", "Info") for item in formal).items())
             ),
@@ -2206,6 +3327,11 @@ def adjudicate_report(
         "coverage": coverage,
         "findings": formal,
         "manual_checks": manual,
+        "manuscript_map_validation": manuscript_map_validation,
+        "claim_logic_semantic_review": claim_logic_semantic_review,
+        "draft_planned_items": draft_planned_items,
+        "questions_for_author": questions_for_author,
+        "next_writing_tasks": next_writing_tasks,
         "diagnostics": sorted(set(diagnostics)),
     }
     stable_report = {
@@ -2216,11 +3342,17 @@ def adjudicate_report(
             "ledger_fingerprint",
             "final_ledger_fingerprint",
             "coverage_fingerprint",
+            "mode",
             "review_status",
             "submission_readiness",
             "findings",
             "manual_checks",
             "diagnostics",
+            "draft_planned_items",
+            "manuscript_map_validation",
+            "claim_logic_semantic_review",
+            "questions_for_author",
+            "next_writing_tasks",
         )
     }
     result["report_fingerprint"] = sha256_bytes(canonical_json(stable_report))

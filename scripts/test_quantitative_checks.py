@@ -7,6 +7,7 @@ from quantitative_checks import (
     QuantityProfileEntry,
     analyze_quantitative_text,
     load_quantity_profile,
+    main as quantitative_main,
     normalize_unit,
 )
 
@@ -213,6 +214,25 @@ F = k u
             self.assertEqual("F", loaded[0].canonical_symbol)
             self.assertEqual(("P",), loaded[0].aliases)
             self.assertTrue(loaded[0].require_definition)
+
+    def test_cli_creates_a_new_output_parent_directory(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            manuscript = root / "paper.md"
+            manuscript.write_text(
+                "Results\nThe peak drift was 2.0%.\n",
+                encoding="utf-8",
+            )
+            output = root / "new-review" / "quantitative.json"
+
+            exit_code = quantitative_main(
+                [str(manuscript), "--output", str(output)]
+            )
+
+            self.assertEqual(0, exit_code)
+            self.assertTrue(output.is_file())
+            payload = json.loads(output.read_text(encoding="utf-8"))
+            self.assertEqual(str(manuscript.resolve()), payload["input"]["path"])
 
 
 if __name__ == "__main__":

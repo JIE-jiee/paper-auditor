@@ -30,6 +30,7 @@ from xml.etree import ElementTree
 
 SCHEMA_VERSION = "0.1.0"
 PDFTEXT_TIMEOUT_SECONDS = 60
+MANUSCRIPT_STAGES = {"draft", "complete"}
 SEVERITY_ORDER = {"Blocker": 0, "Major": 1, "Minor": 2, "Info": 3}
 PREFIXES = {
     "abbreviation": "ABBR",
@@ -152,7 +153,29 @@ CALLOUT_RE = re.compile(
     r"\(?(?P<identifier>[A-Z]?\d+(?:\.\d+)*[A-Za-z]?)\)?",
     re.IGNORECASE,
 )
-
+PLANNED_TARGET_AFTER_RE = re.compile(
+    r"^\s*(?:"
+    r"(?:is|are|was|were)\s+(?:still\s+|currently\s+)?being\s+"
+    r"(?:prepared|finalized|developed|compiled|processed|generated|created|drafted|"
+    r"completed|updated|assembled)"
+    r"|(?:will|shall)\s+(?:be\s+)?"
+    r"(?:prepared|finalized|developed|compiled|processed|generated|created|drafted|"
+    r"completed|updated|present|show|compare|summarize|report|provide|list|illustrate|"
+    r"display|contain)"
+    r")\b",
+    re.IGNORECASE,
+)
+PLANNED_TARGET_BEFORE_RE = re.compile(
+    r"(?:"
+    r"(?:is|are|was|were)\s+(?:still\s+|currently\s+)?being\s+"
+    r"(?:prepared|finalized|developed|compiled|processed|generated|created|drafted|"
+    r"completed|updated|assembled)\s+(?:for|in|as)"
+    r"|(?:will|shall)\s+be\s+"
+    r"(?:presented|shown|compared|summarized|reported|provided|listed|illustrated|"
+    r"displayed|included)\s+(?:in|as|by)"
+    r")\s*$",
+    re.IGNORECASE,
+)
 
 class AuditError(RuntimeError):
     """Fatal input or configuration problem."""
@@ -712,6 +735,14 @@ def _short_quote(text: str, start: int | None = None, end: int | None = None) ->
     return compact[:180]
 
 
+def _local_clause_quote(text: str, start: int, end: int) -> str:
+    left_matches = list(re.finditer(r"[.!?;](?:\s+|$)", text[:start]))
+    left = left_matches[-1].end() if left_matches else 0
+    right_match = re.search(r"[.!?;](?:\s+|$)", text[end:])
+    right = end + right_match.end() if right_match else len(text)
+    return _short_quote(text[left:right])
+
+
 def _normalize_phrase(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", value.casefold()).strip()
 
@@ -738,6 +769,17 @@ def _crossref_kind(label: str) -> str:
     return "equation"
 
 
+def _is_explicitly_planned_target(text: str, start: int, end: int) -> bool:
+    """Match only local, explicit future or in-progress target wording."""
+    left = text[max(0, start - 180) : start]
+    right = text[end : min(len(text), end + 180)]
+    left = re.split(r"[.!?;]\s*", left)[-1]
+    right = re.split(r"[!?;]|\.(?:\s|$)", right, maxsplit=1)[0]
+    return bool(
+        PLANNED_TARGET_AFTER_RE.match(right)
+        or PLANNED_TARGET_BEFORE_RE.search(left)
+    )
+
 class Auditor:
     def __init__(
         self,
@@ -746,14 +788,21 @@ class Auditor:
         profile: dict[str, Any],
         terms: list[dict[str, Any]],
         diagnostics: list[dict[str, Any]],
+        manuscript_stage: str = "complete",
     ) -> None:
+        if manuscript_stage not in MANUSCRIPT_STAGES:
+            allowed = ", ".join(sorted(MANUSCRIPT_STAGES))
+            raise AuditError(f"manuscript_stage 必须是以下值之一：{allowed}。")
         self.input_path = input_path
         self.units = units
         self.profile = profile
         self.terms = terms
         self.diagnostics = diagnostics
+        self.manuscript_stage = manuscript_stage
         self.findings: list[dict[str, Any]] = []
         self.finding_ids: set[str] = set()
+        self.planned_items: list[dict[str, Any]] = []
+        self.planned_item_ids: set[str] = set()
         self.inventory: dict[str, Any] = {}
         self.extra_source_paths: set[Path] = set()
         overrides = profile.get("severity_overrides", {})
@@ -845,6 +894,50 @@ class Auditor:
             }
         )
 
+    def add_planned_item(
+        self,
+        *,
+        check_id: str,
+        block: Block,
+        target_kind: str,
+        target_identifier: str,
+        next_step: str,
+        key: str,
+        quote: str | None = None,
+    ) -> None:
+        location = block.location()
+        stable_material = "\0".join(
+            [
+                check_id,
+                location["source"].casefold(),
+                str(location.get("line", "")),
+                str(location.get("paragraph", "")),
+                str(location.get("page", "")),
+                _normalize_phrase(key),
+            ]
+        )
+        digest = hashlib.blake2s(
+            stable_material.encode("utf-8"), digest_size=5
+        ).hexdigest().upper()
+        identifier = f"PLAN-{digest}"
+        if identifier in self.planned_item_ids:
+            return
+        self.planned_item_ids.add(identifier)
+        self.planned_items.append(
+            {
+                "id": identifier,
+                "check_id": check_id,
+                "status": "planned",
+                "location": location,
+                "quote": quote if quote is not None else _short_quote(block.raw),
+                "target": {
+                    "kind": target_kind,
+                    "identifier": target_identifier,
+                },
+                "next_step": next_step,
+            }
+        )
+
     @property
     def blocks(self) -> list[Block]:
         return [block for unit in self.units for block in unit.blocks]
@@ -865,6 +958,14 @@ class Auditor:
                 finding["id"],
             )
         )
+        self.planned_items.sort(
+            key=lambda item: (
+                item["location"]["source"].casefold(),
+                item["location"].get("line", 0),
+                item["check_id"],
+                item["id"],
+            )
+        )
         manifests = []
         for unit in self.units:
             if unit.path.is_file():
@@ -877,16 +978,20 @@ class Auditor:
         return {
             "schema_version": SCHEMA_VERSION,
             "generated_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+            "pass_id": "deterministic_text",
             "input": str(self.input_path.resolve()),
+            "manuscript_stage": self.manuscript_stage,
             "sources": manifests,
             "summary": {
                 "finding_count": len(self.findings),
+                "planned_item_count": len(self.planned_items),
                 "by_severity": dict(
                     sorted(Counter(item["severity"] for item in self.findings).items())
                 ),
                 "diagnostic_count": len(self.diagnostics),
             },
             "findings": self.findings,
+            "planned_items": self.planned_items,
             "diagnostics": sorted(
                 self.diagnostics,
                 key=lambda item: (item["level"], item["source"].casefold(), item["code"]),
@@ -1546,7 +1651,7 @@ class Auditor:
 
     def check_plain_cross_references(self) -> None:
         declarations: dict[tuple[str, str], list[Block]] = defaultdict(list)
-        callouts: dict[tuple[str, str], list[Block]] = defaultdict(list)
+        callouts: dict[tuple[str, str], list[tuple[Block, int, int]]] = defaultdict(list)
         for block in self.blocks:
             if block.is_reference_section:
                 continue
@@ -1591,7 +1696,7 @@ class Auditor:
                     _crossref_kind(match.group("label")),
                     match.group("identifier").casefold(),
                 )
-                callouts[key].append(block)
+                callouts[key].append((block, match.start(), match.end()))
 
         for key, blocks in sorted(declarations.items()):
             kind, identifier = key
@@ -1629,11 +1734,32 @@ class Auditor:
                 )
 
         declared_kinds = {kind for kind, _ in declarations}
-        for key, blocks in sorted(callouts.items()):
+        for key, occurrences in sorted(callouts.items()):
             if key in declarations:
                 continue
             kind, identifier = key
-            block = blocks[0]
+            unresolved_occurrences = occurrences
+            if self.manuscript_stage == "draft":
+                unresolved_occurrences = []
+                for block, start, end in occurrences:
+                    if _is_explicitly_planned_target(block.scan, start, end):
+                        self.add_planned_item(
+                            check_id="crossref-callout-planned-target",
+                            block=block,
+                            quote=_local_clause_quote(block.raw, start, end),
+                            target_kind=kind,
+                            target_identifier=identifier,
+                            next_step=(
+                                f"完成 {kind} {identifier}，补充可唯一识别的题注或编号目标，"
+                                "再复核正文调用。"
+                            ),
+                            key=f"planned-missing|{kind}|{identifier}|{start}",
+                        )
+                    else:
+                        unresolved_occurrences.append((block, start, end))
+                if not unresolved_occurrences:
+                    continue
+            block, _, _ = unresolved_occurrences[0]
             confidence = 0.87 if kind in declared_kinds and block.unit.format not in {"docx", "pdf"} else 0.68
             if block.unit.format == "pdf":
                 confidence = 0.62
@@ -1684,7 +1810,7 @@ class Auditor:
             self.inventory["latex"] = {"applicable": False}
             return
         labels: dict[str, list[Block]] = defaultdict(list)
-        references: list[tuple[str, Block]] = []
+        references: list[tuple[str, Block, int, int]] = []
         citations: list[tuple[str, Block]] = []
         nocitations: list[tuple[str, Block]] = []
         nocite_star = False
@@ -1699,8 +1825,13 @@ class Auditor:
                 unit.structure,
             ):
                 block = unit.block_at_offset(match.start())
+                line_start = unit.line_starts[block.line - 1]
+                local_start = max(0, match.start() - line_start)
+                local_end = max(local_start, match.end() - line_start)
                 references.extend(
-                    (key.strip(), block) for key in match.group(1).split(",") if key.strip()
+                    (key.strip(), block, local_start, local_end)
+                    for key in match.group(1).split(",")
+                    if key.strip()
                 )
             cite_re = re.compile(
                 r"\\(?P<command>[A-Za-z]*cite[A-Za-z]*)\*?"
@@ -1736,9 +1867,25 @@ class Auditor:
                     key=f"duplicate-label|{key}",
                 )
 
-        referenced_label_keys = {key for key, _ in references}
-        for key, block in references:
+        referenced_label_keys = {key for key, _, _, _ in references}
+        for key, block, start, end in references:
             if key in labels:
+                continue
+            if (
+                self.manuscript_stage == "draft"
+                and _is_explicitly_planned_target(block.scan, start, end)
+            ):
+                self.add_planned_item(
+                    check_id="latex-reference-planned-label",
+                    block=block,
+                    quote=_local_clause_quote(block.raw, start, end),
+                    target_kind="latex-label",
+                    target_identifier=key,
+                    next_step=(
+                        f"完成引用目标并定义唯一 \\label{{{key}}}，再编译复核引用解析。"
+                    ),
+                    key=f"planned-label|{key}|{start}",
+                )
                 continue
             confidence = 0.72 if external_documents else 0.99
             self.add_finding(
@@ -1937,7 +2084,9 @@ def render_report(result: dict[str, Any]) -> str:
         "# 论文确定性审核报告",
         "",
         f"- 输入：`{result['input']}`",
+        f"- 稿件阶段：`{result['manuscript_stage']}`",
         f"- 正式发现：{summary['finding_count']} 条",
+        f"- 计划项：{summary['planned_item_count']} 条",
         f"- 解析诊断：{summary['diagnostic_count']} 条",
         "- 范围：缩写、术语、英语变体、单位、交叉引用、LaTeX/BibTeX 一致性",
         "",
@@ -1964,6 +2113,24 @@ def render_report(result: dict[str, Any]) -> str:
                 f"- 原因：{finding['reason']}",
                 f"- 建议：{finding['suggested_fix']}",
                 f"- 可安全自动修复：{'是' if finding['auto_fixable'] else '否'}",
+                "",
+            ]
+        )
+    lines.extend(["## 草稿计划项", ""])
+    if not result["planned_items"]:
+        lines.extend(["无。", ""])
+    for item in result["planned_items"]:
+        target = item["target"]
+        lines.extend(
+            [
+                f"### {item['id']} · {target['kind']} {target['identifier']}",
+                "",
+                f"- 检查：`{item['check_id']}`",
+                f"- 状态：`{item['status']}`",
+                f"- 位置：{_format_location(item['location'])}",
+                f"- 原文：“{item['quote']}”",
+                f"- 目标：`{target['kind']}:{target['identifier']}`",
+                f"- 下一步：{item['next_step']}",
                 "",
             ]
         )
@@ -1997,8 +2164,12 @@ def run_audit(
     *,
     profile_path: str | Path | None = None,
     terms_path: str | Path | None = None,
+    manuscript_stage: str = "complete",
     force: bool = False,
 ) -> dict[str, Any]:
+    if manuscript_stage not in MANUSCRIPT_STAGES:
+        allowed = ", ".join(sorted(MANUSCRIPT_STAGES))
+        raise AuditError(f"manuscript_stage 必须是以下值之一：{allowed}。")
     manuscript = Path(input_path).resolve()
     review_dir = Path(output_dir).resolve()
     outputs = [review_dir / "findings.json", review_dir / "review-report.md"]
@@ -2025,7 +2196,7 @@ def run_audit(
     profile = _load_profile(profile_file)
     terms = _load_terms(terms_file)
     units = _load_sources(manuscript, diagnostics)
-    auditor = Auditor(manuscript, units, profile, terms, diagnostics)
+    auditor = Auditor(manuscript, units, profile, terms, diagnostics, manuscript_stage)
     result = auditor.run()
     protected = {unit.path.resolve() for unit in units} | {
         path.resolve() for path in auditor.extra_source_paths
@@ -2054,6 +2225,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--profile", help="覆盖默认 personal-profile.json")
     parser.add_argument("--terms", help="覆盖默认 terminology.tsv")
     parser.add_argument(
+        "--manuscript-stage",
+        choices=sorted(MANUSCRIPT_STAGES),
+        default="complete",
+        help="稿件阶段；draft 仅将局部明确计划中的缺失图表/标签列为 planned_items",
+    )
+    parser.add_argument(
         "--force",
         action="store_true",
         help="显式允许覆盖输出目录中已有的 findings.json/review-report.md",
@@ -2074,6 +2251,7 @@ def main(argv: list[str] | None = None) -> int:
             output_dir,
             profile_path=args.profile,
             terms_path=args.terms,
+            manuscript_stage=args.manuscript_stage,
             force=args.force,
         )
     except (AuditError, OSError) as exc:

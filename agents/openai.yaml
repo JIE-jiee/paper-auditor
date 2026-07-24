@@ -1,7 +1,7 @@
 interface:
   display_name: "个人论文审校"
-  short_description: "结构工程论文的引文支持、量值一致性、标准条款与逻辑审核"
-  default_prompt: "Use $paper-auditor in deep mode to audit this manuscript, focusing on claim-to-source support, formula/unit/value consistency, and engineering-standard applicability, and produce an evidence-linked Chinese report without modifying the source."
+  short_description: "结构工程论文的写作导航、论证追踪、数值引用与证据审核"
+  default_prompt: "Use $paper-auditor in the appropriate draft or deep mode to build an evidence-linked paper spine, review this manuscript, and produce a Chinese report without modifying the source."
 
 policy:
   allow_implicit_invocation: true

@@ -25,15 +25,18 @@ class AuditManuscriptTests(unittest.TestCase):
     def tearDown(self):
         self.temporary.cleanup()
 
-    def audit_text(self, name, text):
+    def audit_text(self, name, text, *, manuscript_stage="complete"):
         manuscript = self.root / name
         manuscript.write_text(text, encoding="utf-8")
         output = self.root / f"{Path(name).stem}-review"
-        result = run_audit(manuscript, output)
+        result = run_audit(
+            manuscript, output, manuscript_stage=manuscript_stage
+        )
         self.assertTrue((output / "findings.json").is_file())
         self.assertTrue((output / "review-report.md").is_file())
         loaded = json.loads((output / "findings.json").read_text(encoding="utf-8"))
         self.assertEqual(result["findings"], loaded["findings"])
+        self.assertEqual(result["planned_items"], loaded["planned_items"])
         return manuscript, output, result
 
     def write_profile(self, name, changes):
@@ -402,6 +405,144 @@ Eq. (1). Governing relationship.
             " ".join(item["observation"] for item in missing).casefold(),
         )
 
+    def test_draft_explicit_planned_callouts_are_not_formal_findings(self):
+        manuscript, output, result = self.audit_text(
+            "planned-crossrefs.md",
+            """# Experimental program
+The specimen geometry and loading sequence are being finalized for Table 1.
+
+# Preliminary results
+Figure 3 will compare the residual drift after each protocol.
+""",
+            manuscript_stage="draft",
+        )
+        missing = [
+            item
+            for item in result["findings"]
+            if item["check_id"] == "crossref-callout-missing-target"
+        ]
+        self.assertEqual([], missing)
+        self.assertEqual("draft", result["manuscript_stage"])
+        self.assertEqual(2, result["summary"]["planned_item_count"])
+        self.assertEqual(
+            {("table", "1"), ("figure", "3")},
+            {
+                (item["target"]["kind"], item["target"]["identifier"])
+                for item in result["planned_items"]
+            },
+        )
+        self.assertTrue(
+            all(item["id"].startswith("PLAN-") for item in result["planned_items"])
+        )
+        quotes = [item["quote"] for item in result["planned_items"]]
+        self.assertTrue(any(quote.startswith("The specimen geometry") for quote in quotes))
+        self.assertTrue(any("Figure 3 will compare" in quote for quote in quotes))
+        rerun = run_audit(
+            manuscript,
+            self.root / "planned-crossrefs-review-2",
+            manuscript_stage="draft",
+        )
+        self.assertEqual(
+            [item["id"] for item in result["planned_items"]],
+            [item["id"] for item in rerun["planned_items"]],
+        )
+        report = (output / "review-report.md").read_text(encoding="utf-8")
+        self.assertIn("## 草稿计划项", report)
+        self.assertIn("table:1", report)
+        self.assertIn("figure:3", report)
+
+    def test_complete_stage_keeps_planned_wording_as_formal_findings(self):
+        _, _, result = self.audit_text(
+            "complete-crossrefs.md",
+            """# Methods
+The loading sequence is being finalized for Table 1.
+Figure 3 will compare the residual drift after each protocol.
+""",
+        )
+        missing = [
+            item
+            for item in result["findings"]
+            if item["check_id"] == "crossref-callout-missing-target"
+        ]
+        self.assertEqual(2, len(missing))
+        self.assertEqual("complete", result["manuscript_stage"])
+        self.assertEqual([], result["planned_items"])
+
+    def test_draft_classifies_each_callout_occurrence_independently(self):
+        _, _, result = self.audit_text(
+            "mixed-crossrefs.md",
+            "Figure 2 will compare the processed data; Figure 3 shows the measured response.\n",
+            manuscript_stage="draft",
+        )
+        self.assertEqual(
+            [("figure", "2")],
+            [
+                (item["target"]["kind"], item["target"]["identifier"])
+                for item in result["planned_items"]
+            ],
+        )
+        missing_text = " ".join(
+            item["observation"]
+            for item in result["findings"]
+            if item["check_id"] == "crossref-callout-missing-target"
+        ).casefold()
+        self.assertIn("figure 3", missing_text)
+        self.assertNotIn("figure 2", missing_text)
+
+    def test_draft_does_not_hide_conditional_negated_or_uncertain_callouts(self):
+        _, _, result = self.audit_text(
+            "unresolved-crossrefs.md",
+            """Figure 4 may be added after review.
+Figure 5 will not be added.
+If Figure 6 were added, it would summarize the response.
+""",
+            manuscript_stage="draft",
+        )
+        missing = [
+            item
+            for item in result["findings"]
+            if item["check_id"] == "crossref-callout-missing-target"
+        ]
+        self.assertEqual(3, len(missing))
+        self.assertEqual([], result["planned_items"])
+
+    def test_draft_explicit_planned_latex_ref_becomes_planned_item(self):
+        _, _, result = self.audit_text(
+            "planned-label.tex",
+            r"""\documentclass{article}
+\begin{document}
+Figure~\ref{fig:planned} will compare the residual drift after each protocol.
+\end{document}
+""",
+            manuscript_stage="draft",
+        )
+        self.assertNotIn(
+            "latex-reference-missing-label",
+            {item["check_id"] for item in result["findings"]},
+        )
+        self.assertEqual(1, len(result["planned_items"]))
+        planned = result["planned_items"][0]
+        self.assertEqual("latex-reference-planned-label", planned["check_id"])
+        self.assertEqual(
+            {"kind": "latex-label", "identifier": "fig:planned"},
+            planned["target"],
+        )
+
+    def test_draft_unplanned_latex_ref_remains_formal_finding(self):
+        _, _, result = self.audit_text(
+            "missing-label-draft.tex",
+            r"""\documentclass{article}
+\begin{document}
+Figure~\ref{fig:missing} compares the measured response.
+\end{document}
+""",
+            manuscript_stage="draft",
+        )
+        self.assertIn(
+            "latex-reference-missing-label",
+            {item["check_id"] for item in result["findings"]},
+        )
+        self.assertEqual([], result["planned_items"])
     def test_latex_labels_citations_and_bibtex_keys(self):
         tex = self.root / "paper.tex"
         bib = self.root / "refs.bib"
@@ -585,7 +726,19 @@ CoR governed the impact response. CoR was varied parametrically.
         )
         arguments = build_parser().parse_args([str(manuscript), "--force"])
         self.assertTrue(arguments.force)
+        self.assertEqual("complete", arguments.manuscript_stage)
+        draft_arguments = build_parser().parse_args(
+            [str(manuscript), "--manuscript-stage", "draft"]
+        )
+        self.assertEqual("draft", draft_arguments.manuscript_stage)
 
+    def test_invalid_manuscript_stage_fails_before_writing(self):
+        manuscript = self.root / "invalid-stage.md"
+        manuscript.write_text("Figure 1 shows the response.\n", encoding="utf-8")
+        output = self.root / "invalid-stage-review"
+        with self.assertRaisesRegex(AuditError, "manuscript_stage"):
+            run_audit(manuscript, output, manuscript_stage="writing")
+        self.assertFalse(output.exists())
     def test_severity_override_is_applied(self):
         manuscript = self.root / "severity.md"
         manuscript.write_text("# Results\nThe force reached 20kN.\n", encoding="utf-8")
